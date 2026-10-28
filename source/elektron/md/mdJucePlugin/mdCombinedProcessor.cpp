@@ -7,6 +7,7 @@
 #include "dsp56kBase/threadtools.h"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cstdio>
 
@@ -17,16 +18,46 @@ namespace mdJucePlugin
 		constexpr uint32_t g_stateMagic = 0x4d444d4d;
 		constexpr int g_stateVersion = 1;
 
-		// Each machine renders the hardware's six outputs: A/B, C/D and E/F.
+		// Each machine renders the hardware's six output jacks, A to F.
 		constexpr int g_machineChannels = 6;
-		constexpr int g_machinePairs = g_machineChannels / 2;
+
+		// Host buses after the mix, mirroring each machine's routing: the MD
+		// sends a track to the A/B main or to any single jack, while the MM
+		// routes tracks to stereo buses A/B, C/D and E/F.
+		struct MachineOutput
+		{
+			const char* name;
+			bool monomachine;
+			int firstChannel;
+			int channels;
+		};
+		constexpr std::array<MachineOutput, 10> g_machineOutputs
+		{{
+			{ "Machinedrum Main", false, 0, 2 },
+			{ "Machinedrum A", false, 0, 1 },
+			{ "Machinedrum B", false, 1, 1 },
+			{ "Machinedrum C", false, 2, 1 },
+			{ "Machinedrum D", false, 3, 1 },
+			{ "Machinedrum E", false, 4, 1 },
+			{ "Machinedrum F", false, 5, 1 },
+			{ "Monomachine Main", true, 0, 2 },
+			{ "Monomachine C-D", true, 2, 2 },
+			{ "Monomachine E-F", true, 4, 2 },
+		}};
+
+		juce::AudioChannelSet channelSet(const int _channels)
+		{
+			return _channels == 1 ? juce::AudioChannelSet::mono()
+				: juce::AudioChannelSet::stereo();
+		}
+
 
 		void prepareChild(juce::AudioProcessor& _processor,
 			const double _sampleRate, const int _blockSize)
 		{
 			juce::AudioProcessor::BusesLayout layout;
 			layout.inputBuses.add(juce::AudioChannelSet::stereo());
-			for(int bus = 0; bus < g_machinePairs; ++bus)
+			for(int bus = 0; bus < g_machineChannels / 2; ++bus)
 				layout.outputBuses.add(juce::AudioChannelSet::stereo());
 			_processor.setBusesLayout(layout);
 			_processor.setRateAndBufferSizeDetails(_sampleRate, _blockSize);
@@ -34,17 +65,18 @@ namespace mdJucePlugin
 		}
 	}
 
-	CombinedProcessor::CombinedProcessor()
-		: AudioProcessor(BusesProperties()
+	juce::AudioProcessor::BusesProperties CombinedProcessor::combinedBuses()
+	{
+		auto buses = BusesProperties()
 			.withInput("Input A/B", juce::AudioChannelSet::stereo(), true)
-			// After the mix, each machine's hardware outputs in panel order.
-			.withOutput("Mix", juce::AudioChannelSet::stereo(), true)
-			.withOutput("Machinedrum Main", juce::AudioChannelSet::stereo(), false)
-			.withOutput("Machinedrum Out C-D", juce::AudioChannelSet::stereo(), false)
-			.withOutput("Machinedrum Out E-F", juce::AudioChannelSet::stereo(), false)
-			.withOutput("Monomachine Main", juce::AudioChannelSet::stereo(), false)
-			.withOutput("Monomachine Out C-D", juce::AudioChannelSet::stereo(), false)
-			.withOutput("Monomachine Out E-F", juce::AudioChannelSet::stereo(), false))
+			.withOutput("Mix", juce::AudioChannelSet::stereo(), true);
+		for(const auto& output : g_machineOutputs)
+			buses = buses.withOutput(output.name, channelSet(output.channels), false);
+		return buses;
+	}
+
+	CombinedProcessor::CombinedProcessor()
+		: AudioProcessor(combinedBuses())
 		, m_machinedrum(md::MachineModel::Machinedrum, false)
 		, m_monomachine(md::MachineModel::Monomachine, false)
 		, m_maschine(m_machinedrum, m_monomachine)
@@ -273,10 +305,10 @@ namespace mdJucePlugin
 	bool CombinedProcessor::isBusesLayoutSupported(
 		const BusesLayout& _layouts) const
 	{
-		for(int bus = 1; bus < _layouts.outputBuses.size(); ++bus)
+		for(size_t i = 0; i < g_machineOutputs.size(); ++i)
 		{
-			const auto output = _layouts.getChannelSet(false, bus);
-			if(!output.isDisabled() && output != juce::AudioChannelSet::stereo())
+			const auto output = _layouts.getChannelSet(false, static_cast<int>(i) + 1);
+			if(!output.isDisabled() && output != channelSet(g_machineOutputs[i].channels))
 				return false;
 		}
 		return _layouts.getMainOutputChannelSet() == juce::AudioChannelSet::stereo()
@@ -404,17 +436,16 @@ namespace mdJucePlugin
 		captureSysex(m_mmMidi, md::MachineModel::Monomachine);
 
 		// The mix always carries both A/B pairs, halved to keep headroom, whatever
-		// buses the host activates. The other buses carry one machine output
-		// pair each at full level.
-		for(int pair = 0; pair < 2 * g_machinePairs; ++pair)
+		// buses the host activates. The other buses carry machine jacks at full level.
+		for(size_t i = 0; i < g_machineOutputs.size(); ++i)
 		{
-			auto output = getBusBuffer(_audio, false, pair + 1);
-			if(output.getNumChannels() < 2)
+			const auto& source = g_machineOutputs[i];
+			auto output = getBusBuffer(_audio, false, static_cast<int>(i) + 1);
+			if(output.getNumChannels() < source.channels)
 				continue;
-			const auto& machine = pair < g_machinePairs ? m_mdAudio : m_mmAudio;
-			const auto firstChannel = (pair % g_machinePairs) * 2;
-			for(int channel = 0; channel < 2; ++channel)
-				output.copyFrom(channel, 0, machine, firstChannel + channel, 0, samples);
+			const auto& machine = source.monomachine ? m_mmAudio : m_mdAudio;
+			for(int channel = 0; channel < source.channels; ++channel)
+				output.copyFrom(channel, 0, machine, source.firstChannel + channel, 0, samples);
 		}
 		for(int channel = 0; channel < 2; ++channel)
 		{

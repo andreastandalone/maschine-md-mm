@@ -66,6 +66,7 @@ namespace mdJucePlugin
 			juce::Optional<PositionInfo> position;
 		};
 
+		static BusesProperties combinedBuses();
 		void runMonomachineWorker();
 		void captureSysex(const juce::MidiBuffer& _midi, md::MachineModel _model);
 		void runFastBoot(AudioPluginAudioProcessor& _processor,
