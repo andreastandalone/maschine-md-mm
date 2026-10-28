@@ -89,7 +89,8 @@ namespace mdJucePlugin
 			child->setPlayHead(&m_blockPlayHead);
 			child->getPlugin().setMidiClockRunWhileStopped(true);
 		}
-		m_mmWorker = std::thread([this] { runMonomachineWorker(); });
+		for(auto* engine : {&m_md, &m_mm})
+			engine->thread = std::thread([this, engine] { runWorker(*engine); });
 	}
 
 	CombinedProcessor::~CombinedProcessor()
@@ -98,9 +99,12 @@ namespace mdJucePlugin
 			(void)endSysexCapture();
 		stopFastBootWorkers();
 		m_stoppingWorker.store(true, std::memory_order_release);
-		m_mmWorkReady.signal();
-		if(m_mmWorker.joinable())
-			m_mmWorker.join();
+		for(auto* engine : {&m_md, &m_mm})
+		{
+			engine->ready.signal();
+			if(engine->thread.joinable())
+				engine->thread.join();
+		}
 	}
 
 	bool CombinedProcessor::beginSysexCapture(const md::MachineModel _model)
@@ -287,19 +291,50 @@ namespace mdJucePlugin
 		}
 	}
 
-	void CombinedProcessor::runMonomachineWorker()
+	void CombinedProcessor::runWorker(Engine& _engine)
 	{
 		dsp56k::ThreadTools::setCurrentThreadPriority(
 			dsp56k::ThreadPriority::Highest);
 		for(;;)
 		{
-			m_mmWorkReady.wait();
+			_engine.ready.wait();
 			if(m_stoppingWorker.load(std::memory_order_acquire))
 				return;
-			static_cast<juce::AudioProcessor&>(m_monomachine).processBlock(
-				m_mmAudio, m_mmMidi);
-			m_mmWorkFinished.signal();
+			static_cast<juce::AudioProcessor&>(_engine.processor).processBlock(
+				_engine.audio, _engine.midi);
+			_engine.finished.signal();
 		}
+	}
+
+	// Wait for the block started by the previous callback and queue its audio
+	// and MIDI for output. The workers are idle when this returns.
+	void CombinedProcessor::finishPendingBlock()
+	{
+		if(m_pendingSamples == 0)
+			return;
+		for(auto* engine : {&m_md, &m_mm})
+		{
+			if(engine->rendering)
+				engine->finished.wait();
+			engine->rendering = false;
+		}
+		captureSysex(m_md.midi, md::MachineModel::Machinedrum);
+		captureSysex(m_mm.midi, md::MachineModel::Monomachine);
+
+		const auto capacity = m_md.delay.getNumSamples();
+		const auto first = std::min(m_pendingSamples, capacity - m_delayWrite);
+		for(auto* engine : {&m_md, &m_mm})
+		{
+			for(int channel = 0; channel < g_machineChannels; ++channel)
+			{
+				engine->delay.copyFrom(channel, m_delayWrite, engine->audio, channel, 0, first);
+				engine->delay.copyFrom(channel, 0, engine->audio, channel, first,
+					m_pendingSamples - first);
+			}
+			m_pendingMidi.addEvents(engine->midi, 0, m_pendingSamples, 0);
+		}
+		m_delayWrite = (m_delayWrite + m_pendingSamples) % capacity;
+		m_pendingSamples = 0;
 	}
 
 	bool CombinedProcessor::isBusesLayoutSupported(
@@ -320,15 +355,23 @@ namespace mdJucePlugin
 		const int _maximumBlockSize)
 	{
 		stopFastBootWorkers();
+		finishPendingBlock();
 		m_maximumBlockSize = std::max(1, _maximumBlockSize);
-		m_mdAudio.setSize(g_machineChannels, m_maximumBlockSize, false, true);
-		m_mmAudio.setSize(g_machineChannels, m_maximumBlockSize, false, true);
-		m_mdMidi.ensureSize(4096);
-		m_mmMidi.ensureSize(4096);
+		for(auto* engine : {&m_md, &m_mm})
+		{
+			engine->audio.setSize(g_machineChannels, m_maximumBlockSize, false, true);
+			engine->midi.ensureSize(4096);
+			engine->delay.setSize(g_machineChannels, 2 * m_maximumBlockSize, false, true);
+			engine->delay.clear();
+		}
+		m_pendingMidi.ensureSize(8192);
+		m_pendingMidi.clear();
+		m_delayRead = 0;
+		m_delayWrite = m_maximumBlockSize;
 		m_midiRouter.reset();
 		prepareChild(m_machinedrum, _sampleRate, m_maximumBlockSize);
 		prepareChild(m_monomachine, _sampleRate, m_maximumBlockSize);
-		setLatencySamples(std::max(m_machinedrum.getLatencySamples(),
+		setLatencySamples(m_maximumBlockSize + std::max(m_machinedrum.getLatencySamples(),
 			m_monomachine.getLatencySamples()));
 		if(juce::JUCEApplicationBase::isStandaloneApp())
 		{
@@ -343,6 +386,7 @@ namespace mdJucePlugin
 	void CombinedProcessor::releaseResources()
 	{
 		stopFastBootWorkers();
+		finishPendingBlock();
 		static_cast<juce::AudioProcessor&>(m_machinedrum).releaseResources();
 		static_cast<juce::AudioProcessor&>(m_monomachine).releaseResources();
 	}
@@ -361,17 +405,19 @@ namespace mdJucePlugin
 			return;
 		}
 
-		m_mdAudio.setSize(g_machineChannels, samples, false, false, true);
-		m_mmAudio.setSize(g_machineChannels, samples, false, false, true);
-		m_mdAudio.clear();
-		m_mmAudio.clear();
-		for(int channel = 0; channel < 2; ++channel)
+		// The machines render on their workers one block ahead of the host, so
+		// the audio thread never waits for the slower one. setLatencySamples
+		// reports the extra block for host delay compensation.
+		finishPendingBlock();
+
+		for(auto* engine : {&m_md, &m_mm})
 		{
-			m_mdAudio.copyFrom(channel, 0, _audio, channel, 0, samples);
-			m_mmAudio.copyFrom(channel, 0, _audio, channel, 0, samples);
+			engine->audio.setSize(g_machineChannels, samples, false, false, true);
+			engine->audio.clear();
+			for(int channel = 0; channel < 2; ++channel)
+				engine->audio.copyFrom(channel, 0, _audio, channel, 0, samples);
+			engine->midi.clear();
 		}
-		m_mdMidi.clear();
-		m_mmMidi.clear();
 		const auto* const hostPlayHead = getPlayHead();
 		m_blockPlayHead.position = hostPlayHead ? hostPlayHead->getPosition()
 			: juce::Optional<juce::AudioPlayHead::PositionInfo>();
@@ -388,14 +434,14 @@ namespace mdJucePlugin
 			const auto destinations = m_midiRouter.route(bytes[0],
 				size > 1 ? bytes[1] : 0, size > 2 ? bytes[2] : 0, focused);
 			if(destinations & CombinedMidiRouter::machinedrum)
-				m_mdMidi.addEvent(message, event.samplePosition);
+				m_md.midi.addEvent(message, event.samplePosition);
 			if(destinations & CombinedMidiRouter::monomachine)
 			{
 				const auto channels = m_midiRouter.monomachineChannels(bytes[0],
 					size > 1 ? bytes[1] : 0, size > 2 ? bytes[2] : 0,
 					mmNoteChannel);
 				if(bytes[0] >= 0xf0)
-					m_mmMidi.addEvent(message, event.samplePosition);
+					m_mm.midi.addEvent(message, event.samplePosition);
 				else
 				{
 					for(int channel = 0; channel < 16; ++channel)
@@ -404,36 +450,24 @@ namespace mdJucePlugin
 							continue;
 						auto routed = message;
 						routed.setChannel(channel + 1);
-						m_mmMidi.addEvent(routed, event.samplePosition);
+						m_mm.midi.addEvent(routed, event.samplePosition);
 					}
 				}
 			}
 		}
 
-		// The machines do not share mutable emulation state. Run MM on its persistent
-		// high-priority worker while the host audio thread runs MD, then join at the
-		// block boundary before mixing. This keeps the heavier engine from serially
-		// consuming the other engine's deadline budget.
-		const bool processMm = !m_mmFastBootActive.load(std::memory_order_acquire);
-		if(processMm)
-			m_mmWorkReady.signal();
-		if(!m_mdFastBootActive.load(std::memory_order_acquire))
-			static_cast<juce::AudioProcessor&>(m_machinedrum).processBlock(
-				m_mdAudio, m_mdMidi);
-		else
+		// Output the block the workers rendered during the previous callback.
+		const auto capacity = m_md.delay.getNumSamples();
+		const auto first = std::min(samples, capacity - m_delayRead);
+		const auto addDelayed = [&](juce::AudioBuffer<float>& _destination,
+			const int _destinationChannel, const Engine& _engine,
+			const int _machineChannel, const float _gain)
 		{
-			m_mdAudio.clear();
-			m_mdMidi.clear();
-		}
-		if(processMm)
-			m_mmWorkFinished.wait();
-		else
-		{
-			m_mmAudio.clear();
-			m_mmMidi.clear();
-		}
-		captureSysex(m_mdMidi, md::MachineModel::Machinedrum);
-		captureSysex(m_mmMidi, md::MachineModel::Monomachine);
+			_destination.addFrom(_destinationChannel, 0, _engine.delay,
+				_machineChannel, m_delayRead, first, _gain);
+			_destination.addFrom(_destinationChannel, first, _engine.delay,
+				_machineChannel, 0, samples - first, _gain);
+		};
 
 		// The mix always carries both A/B pairs, halved to keep headroom, whatever
 		// buses the host activates. The other buses carry machine jacks at full level.
@@ -443,19 +477,37 @@ namespace mdJucePlugin
 			auto output = getBusBuffer(_audio, false, static_cast<int>(i) + 1);
 			if(output.getNumChannels() < source.channels)
 				continue;
-			const auto& machine = source.monomachine ? m_mmAudio : m_mdAudio;
+			output.clear();
 			for(int channel = 0; channel < source.channels; ++channel)
-				output.copyFrom(channel, 0, machine, source.firstChannel + channel, 0, samples);
+				addDelayed(output, channel, source.monomachine ? m_mm : m_md,
+					source.firstChannel + channel, 1.0f);
 		}
 		for(int channel = 0; channel < 2; ++channel)
 		{
-			_audio.copyFrom(channel, 0, m_mdAudio, channel, 0, samples);
-			_audio.applyGain(channel, 0, samples, 0.5f);
-			_audio.addFrom(channel, 0, m_mmAudio, channel, 0, samples, 0.5f);
+			_audio.clear(channel, 0, samples);
+			addDelayed(_audio, channel, m_md, channel, 0.5f);
+			addDelayed(_audio, channel, m_mm, channel, 0.5f);
 		}
+		m_delayRead = (m_delayRead + samples) % capacity;
+
 		_midi.clear();
-		_midi.addEvents(m_mdMidi, 0, samples, 0);
-		_midi.addEvents(m_mmMidi, 0, samples, 0);
+		for(const auto event : m_pendingMidi)
+			_midi.addEvent(event.getMessage(), std::min(event.samplePosition, samples - 1));
+		m_pendingMidi.clear();
+
+		// Start rendering this block. Machines still fast-booting stay silent.
+		m_pendingSamples = samples;
+		for(auto* engine : {&m_md, &m_mm})
+		{
+			engine->rendering = !engine->fastBootActive.load(std::memory_order_acquire);
+			if(engine->rendering)
+				engine->ready.signal();
+			else
+			{
+				engine->audio.clear();
+				engine->midi.clear();
+			}
+		}
 	}
 
 	juce::AudioProcessorEditor* CombinedProcessor::createEditor()

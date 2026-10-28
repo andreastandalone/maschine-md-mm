@@ -66,8 +66,26 @@ namespace mdJucePlugin
 			juce::Optional<PositionInfo> position;
 		};
 
+		// One machine rendered on its own thread, one host block ahead of output.
+		struct Engine
+		{
+			Engine(AudioPluginAudioProcessor& _processor, std::atomic<bool>& _fastBootActive)
+				: processor(_processor), fastBootActive(_fastBootActive) {}
+
+			AudioPluginAudioProcessor& processor;
+			std::atomic<bool>& fastBootActive;
+			juce::AudioBuffer<float> audio;
+			juce::MidiBuffer midi;
+			juce::AudioBuffer<float> delay;
+			juce::WaitableEvent ready;
+			juce::WaitableEvent finished;
+			std::thread thread;
+			bool rendering = false;
+		};
+
 		static BusesProperties combinedBuses();
-		void runMonomachineWorker();
+		void runWorker(Engine& _engine);
+		void finishPendingBlock();
 		void captureSysex(const juce::MidiBuffer& _midi, md::MachineModel _model);
 		void runFastBoot(AudioPluginAudioProcessor& _processor,
 			std::atomic<bool>& _active);
@@ -77,10 +95,17 @@ namespace mdJucePlugin
 		AudioPluginAudioProcessor m_monomachine;
 		maschine::Controller m_maschine;
 		BlockPlayHead m_blockPlayHead;
-		juce::AudioBuffer<float> m_mdAudio;
-		juce::AudioBuffer<float> m_mmAudio;
-		juce::MidiBuffer m_mdMidi;
-		juce::MidiBuffer m_mmMidi;
+		std::atomic<bool> m_stopFastBoot{false};
+		std::atomic<bool> m_mdFastBootActive{false};
+		std::atomic<bool> m_mmFastBootActive{false};
+		Engine m_md{m_machinedrum, m_mdFastBootActive};
+		Engine m_mm{m_monomachine, m_mmFastBootActive};
+		// Rendered audio waits in each engine's delay ring for one maximum block,
+		// so every callback reads a block the workers finished during the previous one.
+		int m_delayRead = 0;
+		int m_delayWrite = 0;
+		int m_pendingSamples = 0;
+		juce::MidiBuffer m_pendingMidi;
 		CombinedMidiRouter m_midiRouter;
 		std::mutex m_captureMutex;
 		std::vector<uint8_t> m_captureBytes;
@@ -88,13 +113,7 @@ namespace mdJucePlugin
 		std::atomic<bool> m_captureIncomplete{false};
 		std::atomic<md::MachineModel> m_captureModel{md::MachineModel::Machinedrum};
 		bool m_capturePreviousHostRoute = false;
-		juce::WaitableEvent m_mmWorkReady;
-		juce::WaitableEvent m_mmWorkFinished;
 		std::atomic<bool> m_stoppingWorker{false};
-		std::thread m_mmWorker;
-		std::atomic<bool> m_stopFastBoot{false};
-		std::atomic<bool> m_mdFastBootActive{false};
-		std::atomic<bool> m_mmFastBootActive{false};
 		std::thread m_mdFastBootWorker;
 		std::thread m_mmFastBootWorker;
 		int m_maximumBlockSize = 0;
