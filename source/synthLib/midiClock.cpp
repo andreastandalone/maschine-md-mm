@@ -17,14 +17,12 @@ namespace synthLib
 		if(!_isPlaying)
 		{
 			if(m_isPlaying) stop();
+			if(m_runWhileStopped) processStopped(_bpm, _sampleCount);
 			return;
 		}
 		if(!_sampleCount) return;
 		const double rate = m_plugin.getHostSamplerate();
-		if(!std::isfinite(rate) || rate <= 0) return;
-		if(std::isfinite(_bpm) && _bpm > 0 && _bpm <= rate * 60 / ClockTicksPerQuarter)
-			m_lastBpm = _bpm;
-		if(m_lastBpm <= 0) return;
+		if(!updateBpm(_bpm, rate)) return;
 
 		const auto quartersPerSample = m_lastBpm / (60.0 * rate);
 		const auto samplesPerClock = rate * 60.0 / (m_lastBpm * ClockTicksPerQuarter);
@@ -49,6 +47,31 @@ namespace synthLib
 				static_cast<uint32_t>(offset)});
 		}
 		m_expectedPpq = ppq + static_cast<double>(_sampleCount) * quartersPerSample;
+	}
+
+	bool MidiClock::updateBpm(const double _bpm, const double _rate)
+	{
+		if(!std::isfinite(_rate) || _rate <= 0) return false;
+		if(std::isfinite(_bpm) && _bpm > 0 && _bpm <= _rate * 60 / ClockTicksPerQuarter)
+			m_lastBpm = _bpm;
+		return m_lastBpm > 0;
+	}
+
+	void MidiClock::processStopped(const double _bpm, const size_t _sampleCount)
+	{
+		if(!_sampleCount) return;
+		const double rate = m_plugin.getHostSamplerate();
+		if(!updateBpm(_bpm, rate)) return;
+
+		// Without a moving host position the phase is free-running; START on the
+		// next transport edge realigns clocks to the host's PPQ grid.
+		const auto samplesPerClock = rate * 60.0 / (m_lastBpm * ClockTicksPerQuarter);
+		const auto count = static_cast<double>(_sampleCount);
+		m_stoppedClockOffset = std::min(m_stoppedClockOffset, samplesPerClock);
+		for(; m_stoppedClockOffset < count; m_stoppedClockOffset += samplesPerClock)
+			m_plugin.insertMidiEvent({MidiEventSource::Internal, M_TIMINGCLOCK, 0, 0,
+				static_cast<uint32_t>(m_stoppedClockOffset)});
+		m_stoppedClockOffset -= count;
 	}
 
 	void MidiClock::restart()

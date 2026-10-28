@@ -99,6 +99,7 @@ namespace synthLib
 		bool setState(const std::vector<uint8_t>& _state) const;
 #endif
 		void insertMidiEvent(const SMidiEvent& _ev);
+		void setMidiClockRunWhileStopped(const bool _run) { m_midiClock.setRunWhileStopped(_run); }
 
 		bool setLatencyBlocks(uint32_t _latencyBlocks);
 		uint32_t getLatencyBlocks() const { return m_extraLatencyBlocks; }
