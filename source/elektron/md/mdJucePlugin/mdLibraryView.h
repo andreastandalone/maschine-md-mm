@@ -4,6 +4,8 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
+#include <set>
+
 namespace mdJucePlugin
 {
 	class CombinedProcessor;
@@ -29,7 +31,7 @@ namespace mdJucePlugin
 		};
 		struct Layout
 		{
-			juce::Rectangle<int> tabs, packs, items, status, playKit, playPattern;
+			juce::Rectangle<int> tabs, packs, items, hint, status, playKit, playPattern, import;
 			int row = 0;
 		};
 
@@ -39,17 +41,22 @@ namespace mdJucePlugin
 		juce::String itemLabel(const md::packlib::Item& _item) const;
 		const md::packlib::Item* selectedItem() const;
 		void select(int _column, int _index);
+		std::vector<size_t> markedItems() const;
+		juce::String importHint() const;
+		void importMarked();
 		void playKit();
 		void playPattern();
 		void play();
 		void paintColumn(juce::Graphics& _g, juce::Rectangle<int> _area, int _row,
-			const juce::StringArray& _rows, const Column& _column, bool _focused) const;
+			const juce::StringArray& _rows, const Column& _column, bool _focused,
+			const std::set<int>& _marked) const;
 
 		CombinedProcessor& m_processor;
 		juce::File m_folder;
 		std::vector<library::Pack> m_packs;
 		Column m_columns[2];
 		int m_focus = 0;
+		std::set<int> m_marked;                  // items picked for IMPORTA
 		juce::String m_shownStatus;
 	};
 }

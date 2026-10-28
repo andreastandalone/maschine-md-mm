@@ -26,7 +26,9 @@ namespace mdJucePlugin
 		, m_packs(library::scan(m_folder, md::MachineModel::Machinedrum))
 	{
 		setWantsKeyboardFocus(true);
-		startTimer(30);
+		if(itemCount()) m_marked = {0};
+		// Reading the machine's free slots waits on one reply per tick.
+		startTimer(10);
 	}
 
 	LibraryView::Layout LibraryView::layout() const
@@ -36,12 +38,15 @@ namespace mdJucePlugin
 		l.row = std::max(22, getHeight() / 26);
 		l.tabs = area.removeFromTop(l.row + l.row / 2);
 		auto buttons = area.removeFromBottom(l.row * 2);
-		l.status = area.removeFromBottom(l.row + l.row / 2);
+		l.status = area.removeFromBottom(l.row + l.row / 3);
+		l.hint = area.removeFromBottom(l.row + l.row / 3);
 		l.packs = area.removeFromLeft(area.getWidth() * 2 / 5);
 		l.items = area.withTrimmedLeft(l.row / 2);
 		buttons.removeFromTop(l.row / 3);
-		l.playKit = buttons.removeFromLeft(buttons.getWidth() / 2).withTrimmedRight(l.row / 4);
-		l.playPattern = buttons.withTrimmedLeft(l.row / 4);
+		const auto third = buttons.getWidth() / 3;
+		l.playKit = buttons.removeFromLeft(third).withTrimmedRight(l.row / 4);
+		l.playPattern = buttons.removeFromLeft(third).reduced(l.row / 8, 0);
+		l.import = buttons.withTrimmedLeft(l.row / 4);
 		return l;
 	}
 
@@ -67,7 +72,8 @@ namespace mdJucePlugin
 	}
 
 	void LibraryView::paintColumn(juce::Graphics& _g, const juce::Rectangle<int> _area, const int _row,
-		const juce::StringArray& _rows, const Column& _column, const bool _focused) const
+		const juce::StringArray& _rows, const Column& _column, const bool _focused,
+		const std::set<int>& _marked) const
 	{
 		_g.setColour(g_divider);
 		_g.drawRect(_area);
@@ -77,7 +83,7 @@ namespace mdJucePlugin
 		{
 			const auto index = _column.first + i;
 			const juce::Rectangle<int> r(inner.getX(), inner.getY() + i * _row, inner.getWidth(), _row);
-			const bool selected = index == _column.selected;
+			const bool selected = index == _column.selected || _marked.count(index);
 			if(selected)
 			{
 				_g.setColour(_focused ? g_text : g_dim);
@@ -120,9 +126,11 @@ namespace mdJucePlugin
 		juce::StringArray packs, items;
 		for(const auto& pack : m_packs) packs.add(pack.name);
 		for(const auto& item : m_packs[size_t(m_columns[0].selected)].items) items.add(itemLabel(item));
-		paintColumn(_g, l.packs, l.row, packs, m_columns[0], m_focus == 0);
-		paintColumn(_g, l.items, l.row, items, m_columns[1], m_focus == 1);
+		paintColumn(_g, l.packs, l.row, packs, m_columns[0], m_focus == 0, {});
+		paintColumn(_g, l.items, l.row, items, m_columns[1], m_focus == 1, m_marked);
 
+		_g.setColour(g_dim);
+		_g.drawText(importHint(), l.hint, juce::Justification::centredLeft, true);
 		const auto* session = m_processor.librarySession();
 		_g.setColour(g_text);
 		_g.drawText(session ? session->status() : juce::String(), l.status, juce::Justification::centredLeft, true);
@@ -136,6 +144,7 @@ namespace mdJucePlugin
 		};
 		button(l.playKit, "SUONA KIT", item != nullptr);
 		button(l.playPattern, "SUONA PATTERN", item && item->kind == md::packlib::ItemKind::Pattern);
+		button(l.import, "IMPORTA", item != nullptr);
 	}
 
 	void LibraryView::select(const int _column, const int _index)
@@ -149,7 +158,45 @@ namespace mdJucePlugin
 		if(c.selected < c.first) c.first = c.selected;
 		if(c.selected >= c.first + visible) c.first = c.selected - visible + 1;
 		if(_column == 0) m_columns[1] = {};
+		m_marked = {m_columns[1].selected};
 		repaint();
+	}
+
+	std::vector<size_t> LibraryView::markedItems() const
+	{
+		std::vector<size_t> items;
+		for(const auto index : m_marked)
+			if(index < itemCount()) items.push_back(size_t(index));
+		return items;
+	}
+
+	// What IMPORTA will copy, and which sample slots it overwrites.
+	juce::String LibraryView::importHint() const
+	{
+		if(m_packs.empty()) return {};
+		const auto& pack = m_packs[size_t(m_columns[0].selected)];
+		int kits = 0, patterns = 0;
+		std::set<uint8_t> samples;
+		for(const auto index : markedItems())
+		{
+			const auto& item = pack.items[index];
+			(item.kind == md::packlib::ItemKind::Kit ? kits : patterns)++;
+			for(const auto& kit : pack.items)
+				if(kit.kind == md::packlib::ItemKind::Kit
+					&& (&kit == &item || (item.kind == md::packlib::ItemKind::Pattern && kit.slot == item.kitSlot)))
+					samples.insert(kit.sampleSlots.begin(), kit.sampleSlots.end());
+		}
+		juce::String hint = "SELEZIONATI: " + juce::String(kits) + " KIT, " + juce::String(patterns) + " PATTERN";
+		if(!samples.empty())
+			hint << "  -  IMPORTA SOSTITUISCE I CAMPIONI " << juce::String(*samples.begin() + 1)
+				<< (samples.size() > 1 ? "-" + juce::String(*samples.rbegin() + 1) : juce::String());
+		return hint;
+	}
+
+	void LibraryView::importMarked()
+	{
+		if(auto* session = m_processor.librarySession(); session && !m_packs.empty())
+			session->importItems(m_packs[size_t(m_columns[0].selected)], markedItems());
 	}
 
 	void LibraryView::playKit()
@@ -190,12 +237,36 @@ namespace mdJucePlugin
 		const auto p = _event.getPosition();
 		if(l.playKit.contains(p)) return playKit();
 		if(l.playPattern.contains(p)) return playPattern();
+		if(l.import.contains(p)) return importMarked();
 		for(int column = 0; column < 2; ++column)
 		{
 			const auto area = (column == 0 ? l.packs : l.items).reduced(2);
 			if(!area.contains(p)) continue;
 			m_focus = column;
-			select(column, m_columns[column].first + (p.y - area.getY()) / l.row);
+			const auto index = m_columns[column].first + (p.y - area.getY()) / l.row;
+			if(column == 0 || index >= itemCount())
+			{
+				if(column == 0 && index < int(m_packs.size()) && index != m_columns[0].selected)
+					select(0, index);
+				continue;
+			}
+			// Finder-style: Cmd toggles one item, Shift extends from the cursor.
+			const auto mods = _event.mods;
+			const auto anchor = m_columns[1].selected;
+			if(mods.isCommandDown())
+			{
+				m_columns[1].selected = index;
+				if(!m_marked.erase(index)) m_marked.insert(index);
+				repaint();
+			}
+			else if(mods.isShiftDown())
+			{
+				for(int i = std::min(anchor, index); i <= std::max(anchor, index); ++i) m_marked.insert(i);
+				m_columns[1].selected = index;
+				repaint();
+			}
+			else
+				select(1, index);
 		}
 	}
 
@@ -211,6 +282,7 @@ namespace mdJucePlugin
 		const auto count = column == 0 ? int(m_packs.size()) : itemCount();
 		const auto visible = ((column == 0 ? l.packs : l.items).getHeight() - 4) / l.row;
 		auto& c = m_columns[column];
+		if(_wheel.deltaY == 0) return;
 		const auto step = _wheel.deltaY > 0 ? -3 : 3;
 		c.first = juce::jlimit(0, std::max(0, count - visible), c.first + step);
 		repaint();
@@ -224,6 +296,12 @@ namespace mdJucePlugin
 		else if(code == juce::KeyPress::leftKey) { m_focus = 0; repaint(); }
 		else if(code == juce::KeyPress::rightKey) { if(itemCount()) m_focus = 1; repaint(); }
 		else if(code == juce::KeyPress::returnKey) play();
+		else if(_key.getModifiers().isCommandDown() && (code == 'A' || code == 'a'))
+		{
+			for(int i = 0; i < itemCount(); ++i) m_marked.insert(i);
+			m_focus = 1;
+			repaint();
+		}
 		else return false;
 		return true;
 	}
@@ -236,7 +314,7 @@ namespace mdJucePlugin
 		if(session->status() != m_shownStatus)
 		{
 			m_shownStatus = session->status();
-			repaint(layout().status);
+			repaint();
 		}
 	}
 }

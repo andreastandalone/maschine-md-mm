@@ -109,7 +109,7 @@ namespace mdJucePlugin
 		}
 	}
 
-	bool CombinedProcessor::beginSysexCapture(const md::MachineModel _model)
+	bool CombinedProcessor::beginSysexCapture(const md::MachineModel _model, const bool _toHost)
 	{
 		if(isSysexCapturing())
 			return false;
@@ -119,6 +119,7 @@ namespace mdJucePlugin
 			m_captureBytes.reserve(md::g_midiSysexTransferMaxBytes);
 			m_captureIncomplete.store(false, std::memory_order_relaxed);
 			m_captureModel.store(_model, std::memory_order_release);
+			m_captureToHost.store(_toHost, std::memory_order_release);
 		}
 		auto& machine = _model == md::MachineModel::Machinedrum
 			? m_machinedrum : m_monomachine;
@@ -132,10 +133,12 @@ namespace mdJucePlugin
 		return true;
 	}
 
-	bool CombinedProcessor::hasCapturedSysex()
+	std::vector<uint8_t> CombinedProcessor::takeCapturedSysex()
 	{
+		std::vector<uint8_t> bytes;
 		std::lock_guard lock(m_captureMutex);
-		return !m_captureBytes.empty();
+		std::swap(bytes, m_captureBytes);
+		return bytes;
 	}
 
 	void CombinedProcessor::openLibrarySession()
@@ -157,14 +160,29 @@ namespace mdJucePlugin
 			return;
 		const bool changed = m_librarySession->changedMachine();
 		m_librarySession.reset();
+		if(changed)
+			restoreLibrarySnapshot();
+		std::lock_guard lock(m_librarySnapshotMutex);
+		m_librarySnapshot.reset();
+	}
+
+	void CombinedProcessor::restoreLibrarySnapshot()
+	{
 		juce::MemoryBlock snapshot;
 		{
 			std::lock_guard lock(m_librarySnapshotMutex);
-			std::swap(snapshot, m_librarySnapshot);
+			snapshot = m_librarySnapshot;
 		}
-		if(changed)
-			static_cast<juce::AudioProcessor&>(m_machinedrum).setStateInformation(
-				snapshot.getData(), static_cast<int>(snapshot.getSize()));
+		static_cast<juce::AudioProcessor&>(m_machinedrum).setStateInformation(
+			snapshot.getData(), static_cast<int>(snapshot.getSize()));
+	}
+
+	void CombinedProcessor::commitLibrarySnapshot()
+	{
+		juce::MemoryBlock snapshot;
+		static_cast<juce::AudioProcessor&>(m_machinedrum).getStateInformation(snapshot);
+		std::lock_guard lock(m_librarySnapshotMutex);
+		m_librarySnapshot = std::move(snapshot);
 	}
 
 	std::optional<CombinedProcessor::SysexCapture>
@@ -368,7 +386,15 @@ namespace mdJucePlugin
 				engine->delay.copyFrom(channel, 0, engine->audio, channel, first,
 					m_pendingSamples - first);
 			}
-			m_pendingMidi.addEvents(engine->midi, 0, m_pendingSamples, 0);
+			const bool privateCapture = engine == &m_md && isSysexCapturing()
+				&& m_captureModel.load(std::memory_order_acquire) == md::MachineModel::Machinedrum
+				&& !m_captureToHost.load(std::memory_order_acquire);
+			if(!privateCapture)
+				m_pendingMidi.addEvents(engine->midi, 0, m_pendingSamples, 0);
+			else
+				for(const auto event : engine->midi)
+					if(event.numBytes == 0 || event.data[0] != 0xf0)
+						m_pendingMidi.addEvent(event.data, event.numBytes, event.samplePosition);
 		}
 		m_delayWrite = (m_delayWrite + m_pendingSamples) % capacity;
 		m_pendingSamples = 0;

@@ -34,15 +34,21 @@ namespace mdJucePlugin
 			std::vector<uint8_t> bytes;
 			bool incomplete = false;
 		};
-		bool beginSysexCapture(md::MachineModel _model);
+		// _toHost false keeps the captured replies away from the host's MIDI output.
+		bool beginSysexCapture(md::MachineModel _model, bool _toHost = true);
 		std::optional<SysexCapture> endSysexCapture();
 		bool isSysexCapturing() const { return m_captureEnabled.load(); }
-		bool hasCapturedSysex();
+		// Captured bytes so far, removed from the capture, which keeps running.
+		std::vector<uint8_t> takeCapturedSysex();
 
 		// While the library is open the Machinedrum plays auditioned data; the
 		// state saved by the host stays the one from before it opened.
 		void openLibrarySession();
 		void closeLibrarySession();
+		// Puts the machine back as it was when the library opened.
+		void restoreLibrarySnapshot();
+		// Keeps what the library imported: it becomes the state closing returns to.
+		void commitLibrarySnapshot();
 		LibrarySession* librarySession() { return m_librarySession.get(); }
 
 		void prepareToPlay(double _sampleRate, int _maximumBlockSize) override;
@@ -121,6 +127,7 @@ namespace mdJucePlugin
 		std::vector<uint8_t> m_captureBytes;
 		std::atomic<bool> m_captureEnabled{false};
 		std::atomic<bool> m_captureIncomplete{false};
+		std::atomic<bool> m_captureToHost{true};
 		std::atomic<md::MachineModel> m_captureModel{md::MachineModel::Machinedrum};
 		bool m_capturePreviousHostRoute = false;
 		std::atomic<bool> m_stoppingWorker{false};
