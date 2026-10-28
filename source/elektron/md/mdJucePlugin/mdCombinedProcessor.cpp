@@ -28,7 +28,9 @@ namespace mdJucePlugin
 	CombinedProcessor::CombinedProcessor()
 		: AudioProcessor(BusesProperties()
 			.withInput("Input A/B", juce::AudioChannelSet::stereo(), true)
-			.withOutput("Main A/B", juce::AudioChannelSet::stereo(), true))
+			.withOutput("Main A/B", juce::AudioChannelSet::stereo(), true)
+			.withOutput("MD A/B", juce::AudioChannelSet::stereo(), false)
+			.withOutput("MM A/B", juce::AudioChannelSet::stereo(), false))
 		, m_machinedrum(md::MachineModel::Machinedrum, false)
 		, m_monomachine(md::MachineModel::Monomachine, false)
 		, m_maschine(m_machinedrum, m_monomachine)
@@ -253,6 +255,12 @@ namespace mdJucePlugin
 	bool CombinedProcessor::isBusesLayoutSupported(
 		const BusesLayout& _layouts) const
 	{
+		for(int bus = 1; bus < _layouts.outputBuses.size(); ++bus)
+		{
+			const auto output = _layouts.getChannelSet(false, bus);
+			if(!output.isDisabled() && output != juce::AudioChannelSet::stereo())
+				return false;
+		}
 		return _layouts.getMainOutputChannelSet() == juce::AudioChannelSet::stereo()
 			&& (_layouts.getMainInputChannelSet().isDisabled()
 				|| _layouts.getMainInputChannelSet() == juce::AudioChannelSet::stereo());
@@ -375,8 +383,16 @@ namespace mdJucePlugin
 		captureSysex(m_mdMidi, md::MachineModel::Machinedrum);
 		captureSysex(m_mmMidi, md::MachineModel::Monomachine);
 
+		// Main always carries the mix, halved to keep headroom, whatever buses
+		// the host activates. The MD and MM pairs carry each machine at full level.
+		auto mdOutput = getBusBuffer(_audio, false, 1);
+		auto mmOutput = getBusBuffer(_audio, false, 2);
 		for(int channel = 0; channel < 2; ++channel)
 		{
+			if(mdOutput.getNumChannels() >= 2)
+				mdOutput.copyFrom(channel, 0, m_mdAudio, channel, 0, samples);
+			if(mmOutput.getNumChannels() >= 2)
+				mmOutput.copyFrom(channel, 0, m_mmAudio, channel, 0, samples);
 			_audio.copyFrom(channel, 0, m_mdAudio, channel, 0, samples);
 			_audio.applyGain(channel, 0, samples, 0.5f);
 			_audio.addFrom(channel, 0, m_mmAudio, channel, 0, samples, 0.5f);
