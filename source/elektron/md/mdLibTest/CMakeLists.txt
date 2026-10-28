@@ -340,3 +340,10 @@ add_test(NAME mdLibraryImportFirmwareTest COMMAND mdLibraryImportFirmwareTest ${
 set_tests_properties(mdLibraryImportFirmwareTest PROPERTIES
 	LABELS "Integration;FirmwareTest;Library" SKIP_RETURN_CODE 77 TIMEOUT 900)
 set_property(TARGET mdLibraryImportFirmwareTest PROPERTY FOLDER "Elektron/test")
+
+add_executable(mmLibraryImportFirmwareTest libraryImportMmFirmwareTest.cpp)
+target_link_libraries(mmLibraryImportFirmwareTest PRIVATE mdLib)
+add_test(NAME mmLibraryImportFirmwareTest COMMAND mmLibraryImportFirmwareTest ${CMAKE_SOURCE_DIR}/_handoff/Kits)
+set_tests_properties(mmLibraryImportFirmwareTest PROPERTIES
+	LABELS "Integration;FirmwareTest;Library" SKIP_RETURN_CODE 77 TIMEOUT 900)
+set_property(TARGET mmLibraryImportFirmwareTest PROPERTY FOLDER "Elektron/test")
