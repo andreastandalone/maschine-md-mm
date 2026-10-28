@@ -263,6 +263,45 @@ namespace
 			"overflow silently lost a sample handshake");
 	}
 
+	// Ticks needed to put the first _size bytes of a transfer on the wire.
+	uint32_t messageTicks(const std::vector<uint8_t>& message, const size_t _size)
+	{
+		md::TurboMidiTransfer transfer(1000);
+		Sink sink;
+		auto prepared = md::prepareMidiSysexTransfer(message);
+		if(!prepared || !transfer.start(*prepared, 0)) return 0;
+		uint32_t first = 0;
+		for(uint32_t tick = 1; tick < 100000; ++tick)
+		{
+			transfer.service(1, true, sink);
+			const auto at = std::search(sink.bytes.begin(), sink.bytes.end(), message.begin(), message.begin() + 7);
+			if(at == sink.bytes.end()) continue;
+			if(!first) first = tick;
+			if(size_t(sink.bytes.end() - at) >= _size) return tick - first + 1;
+		}
+		return 0;
+	}
+
+	bool samplesUseFastWire()
+	{
+		// SDS samples are acknowledged per packet, so the emulated wire runs them
+		// 10x faster; unacknowledged dumps stay at the real rate.
+		auto longDump = dump();
+		longDump.insert(longDump.begin() + 9, 50, 0);
+		uint32_t sum = 0;
+		for(size_t i = 9; i < longDump.size() - 5; ++i) sum += longDump[i];
+		const auto size = longDump.size();
+		longDump[size - 5] = uint8_t((sum >> 7) & 0x7f); longDump[size - 4] = uint8_t(sum & 0x7f);
+		longDump[size - 3] = uint8_t(((size - 10) >> 7) & 0x7f); longDump[size - 2] = uint8_t((size - 10) & 0x7f);
+		// Counted from the tick showing a message's first 7 bytes: the other 58
+		// dump bytes take 19 ticks at 3.125 bytes per tick, the 21-byte SDS
+		// header one tick at 31.25.
+		const auto dumpTicks = messageTicks(longDump, longDump.size());
+		const auto sampleTicks = messageTicks(md::test::sdsSample(), 21);
+		return check(dumpTicks >= 15, "dump left the real wire rate")
+			&& check(sampleTicks > 0 && sampleTicks <= 2, "SDS header not on the fast wire");
+	}
+
 	bool mutatedInputs()
 	{
 		uint32_t random = 0x12345678;
@@ -312,7 +351,7 @@ int main(int argc, char** argv)
 		}
 		return success ? 0 : 1;
 	}
-	if(!validation() || !mutatedInputs() || !cancellationAndDrain() || !mixedMmReceiveModes() || !responseOverflow()) return 1;
+	if(!validation() || !samplesUseFastWire() || !mutatedInputs() || !cancellationAndDrain() || !mixedMmReceiveModes() || !responseOverflow()) return 1;
 	for(auto scenario : {Scenario::Normal, Scenario::Nak, Scenario::LostAck, Scenario::LostAckNakNext, Scenario::LostAckNakNextWrap, Scenario::Wait,
 		Scenario::WaitTimeout, Scenario::Cancel, Scenario::Silence, Scenario::WrongReply})
 		if(!transferTest(scenario)) return 1;

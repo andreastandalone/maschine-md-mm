@@ -13,6 +13,11 @@ namespace md
 		using TurboCommand = turboMidi::Command;
 
 		namespace policy = turboMidi::senderPolicy;
+		// The emulated wire has no physical limit. SDS samples are acknowledged
+		// packet by packet, and the firmware keeps up at 10x the negotiated speed
+		// (no retries with the Deep Rhythms banks; beyond that its flash writes
+		// dominate). Unacknowledged dumps lose bytes above the real rate.
+		constexpr uint32_t g_sampleWireSpeedup = 10;
 	}
 
 	TurboMidiTransfer::TurboMidiTransfer(const uint64_t _clockHz)
@@ -634,7 +639,8 @@ namespace md
 		else
 			serviceNegotiation();
 
-		m_baudAccumulator += static_cast<uint64_t>(_cycles) * m_bytesPerSecond;
+		m_baudAccumulator += static_cast<uint64_t>(_cycles) * m_bytesPerSecond
+			* (m_sdsActive ? g_sampleWireSpeedup : 1);
 		pumpWire(_midiPort);
 
 		finishNegotiationSend();
