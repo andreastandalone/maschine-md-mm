@@ -45,14 +45,15 @@ namespace mdJucePlugin
 			std::vector<md::packlib::Sample> samples;
 			std::vector<uint8_t> dumps;
 			std::vector<uint8_t> load;
+			std::vector<uint8_t> verify;      // last dump, read back before reporting
 			juce::String loaded;
 			juce::String missing;
 			// Imports plan their slots once the machine's free slots are known.
 			std::shared_ptr<const library::Pack> source;
 			std::vector<size_t> selected;
 		};
-		// Probe waits for the firmware after samples, Settle after an import,
-		// Panel plays a key sequence.
+		// Probe waits for the firmware after samples, Settle reads the last dump
+		// back, Panel plays a key sequence.
 		enum class Phase { Idle, Inventory, Samples, Probe, Dumps, Settle, Panel };
 
 		void request(const library::Pack& _pack, const md::packlib::Item& _kit,
@@ -63,7 +64,7 @@ namespace mdJucePlugin
 		void startInventory();
 		void serviceInventory();
 		void planCurrentImport();
-		bool startTransfer(std::vector<uint8_t> _bytes, bool _samples);
+		bool startTransfer(std::vector<uint8_t> _bytes, bool _receiveModeConfirmed);
 		void serviceTransfer();
 		void startProbe(Phase _phase);
 		bool beginCapture();
@@ -77,6 +78,8 @@ namespace mdJucePlugin
 		uint8_t auditionKitSlot() const { return uint8_t(kitCount() - 1); }
 		void sendDumps();
 		void afterDumps();
+		void verified();
+		void fail(const juce::String& _status);
 		void runPanel(std::vector<md::PanelStep> _script, double _delayMs, std::function<void()> _then);
 		void servicePanel();
 
@@ -93,6 +96,7 @@ namespace mdJucePlugin
 		size_t m_panelNext = 0;
 		double m_panelAt = 0;
 		std::function<void()> m_afterPanel;
+		bool m_inReceive = false;                       // MM left in SYSEX RECEIVE
 		std::vector<md::packlib::Item> m_machineItems;  // inventory replies, without dumps
 		bool m_ownsCapture = false;
 		double m_probeStarted = 0;

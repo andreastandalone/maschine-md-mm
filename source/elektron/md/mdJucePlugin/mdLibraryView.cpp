@@ -198,7 +198,7 @@ namespace mdJucePlugin
 		if(!m_packs.empty() && !m_marked.empty())
 		{
 			const auto plan = md::packlib::planImport(m_packs[size_t(m_columns[0].selected)].items, markedItems(),
-				std::vector<bool>(64, true), std::vector<bool>(128, true));
+				std::vector<bool>(128, true), std::vector<bool>(128, true));
 			m_hint = "IMPORT: " + juce::String(int(plan.kitsNeeded)) + " KITS, "
 				+ juce::String(int(plan.patternsNeeded)) + " PATTERNS";
 			if(plan.skippedPatterns)

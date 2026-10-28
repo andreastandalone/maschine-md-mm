@@ -17,6 +17,14 @@ namespace mdJucePlugin
 		constexpr uint8_t g_patternSlot = 127;
 		// The Monomachine stores the last dump while still in SYSEX RECEIVE.
 		constexpr double g_receiveSettleMs = 1000.0;
+		constexpr double g_verifyTimeoutMs = 10000.0;
+
+		// The last message of a run of dumps.
+		std::vector<uint8_t> lastDump(const std::vector<uint8_t>& _dumps)
+		{
+			const auto start = std::find(_dumps.rbegin(), _dumps.rend(), uint8_t{0xf0});
+			return start == _dumps.rend() ? std::vector<uint8_t>{} : std::vector<uint8_t>(start.base() - 1, _dumps.end());
+		}
 
 		std::vector<uint8_t> dumpRequest(const md::MachineModel _model, const uint8_t _command, const uint8_t _slot)
 		{
@@ -116,6 +124,7 @@ namespace mdJucePlugin
 			r.load = md::packlib::loadKitCommand(m_model, auditionKitSlot());
 			r.loaded = "KIT " + juce::String(_kit.name).toUpperCase() + " LOADED";
 		}
+		r.verify = lastDump(r.dumps);
 		m_next = std::move(r);
 		if(m_phase == Phase::Idle)
 			startNext();
@@ -249,6 +258,7 @@ namespace mdJucePlugin
 		}
 		setSamples(r, *r.source, plan.sampleSlots);
 		r.dumps = plan.dumps;
+		r.verify = lastDump(r.dumps);
 		r.loaded = "IMPORTED KIT " + slotList(plan.kitSlots, [](uint8_t _s) { return juce::String(_s + 1).paddedLeft('0', 2); });
 		if(!plan.patternSlots.empty())
 			r.loaded << "  PATTERN " << slotList(plan.patternSlots, patternLabel);
@@ -295,6 +305,12 @@ namespace mdJucePlugin
 				m_phase = Phase::Dumps;
 			return;
 		}
+		if(!md::prepareMidiSysexTransfer(m_current->dumps, m_model))
+			return finish("INVALID FILE");
+		// From here on the machine leaves its main screen; closing the library
+		// restores it even if nothing gets stored.
+		m_changed = true;
+		m_inReceive = true;
 		m_status = "OPENING SYSEX RECEIVE...";
 		runPanel(md::mmSysexReceiveScript(), 0, [this]
 		{
@@ -306,18 +322,35 @@ namespace mdJucePlugin
 		});
 	}
 
+	// The last dump is read back before anything is reported: the machine may
+	// have ignored the data (an MM outside SYSEX RECEIVE) or still be storing it.
 	void LibrarySession::afterDumps()
+	{
+		m_inReceive = false;
+		startProbe(Phase::Settle);
+		m_status = "VERIFYING...";
+	}
+
+	void LibrarySession::verified()
 	{
 		if(m_current->source)
 		{
-			// The last pattern is stored once the firmware answers again.
-			startProbe(Phase::Settle);
-			m_status = "STORING...";
-			return;
+			m_processor.commitLibrarySnapshot(m_model);
+			m_changed = false;
 		}
-		sendToMachine(m_current->load);
+		else
+			sendToMachine(m_current->load);
 		finish(m_current->missing.isEmpty() ? m_current->loaded
 			: m_current->loaded + "  MISSING SAMPLES: " + m_current->missing);
+	}
+
+	// A failure while the MM sits in SYSEX RECEIVE leaves that screen first.
+	void LibrarySession::fail(const juce::String& _status)
+	{
+		if(!m_inReceive)
+			return finish(_status);
+		m_inReceive = false;
+		runPanel(md::exitMenusScript(m_model), 0, [this, _status] { finish(_status); });
 	}
 
 	void LibrarySession::runPanel(std::vector<md::PanelStep> _script, const double _delayMs, std::function<void()> _then)
@@ -348,7 +381,7 @@ namespace mdJucePlugin
 	}
 
 	// On failure the request stays current and service() retries it.
-	bool LibrarySession::startTransfer(std::vector<uint8_t> _bytes, const bool _samples)
+	bool LibrarySession::startTransfer(std::vector<uint8_t> _bytes, const bool _receiveModeConfirmed)
 	{
 		auto prepared = md::prepareMidiSysexTransfer(std::move(_bytes), m_model);
 		if(!prepared)
@@ -362,7 +395,7 @@ namespace mdJucePlugin
 			if(!_device) return std::nullopt;
 			const auto ticket = _device->beginUserSysexImport();
 			if(!ticket) return Start::Busy;
-			const auto started = _device->startUserSysexImport(*ticket, *prepared, _samples);
+			const auto started = _device->startUserSysexImport(*ticket, *prepared, _receiveModeConfirmed);
 			if(started == Start::Started) m_ticket = ticket;
 			else
 			{
@@ -413,7 +446,7 @@ namespace mdJucePlugin
 		m_ticket.reset();
 		if(progress->stage != Stage::DeliveredUnverified)
 		{
-			finish(progress->stage == Stage::Failed ? "SEND FAILED" : "SEND CANCELLED");
+			fail(progress->stage == Stage::Failed ? "SEND FAILED" : "SEND CANCELLED");
 			return;
 		}
 		if(m_phase == Phase::Samples)
@@ -443,39 +476,56 @@ namespace mdJucePlugin
 	void LibrarySession::serviceProbe()
 	{
 		const auto t = now();
-		if(m_ownsCapture && !m_processor.takeCapturedSysex().empty())
+		if(m_ownsCapture)
 		{
-			endCapture();
-			if(m_phase == Phase::Settle)
+			const auto reply = m_processor.takeCapturedSysex();
+			if(m_phase == Phase::Probe && !reply.empty())
 			{
-				m_processor.commitLibrarySnapshot(m_model);
-				m_changed = false;
-				finish(m_current->missing.isEmpty() ? m_current->loaded
-					: m_current->loaded + "  MISSING SAMPLES: " + m_current->missing);
+				endCapture();
+				m_phase = Phase::Idle;
+				// A new audition replaces an audition, never an import half done.
+				if(m_next && !m_current->source) startNext();
+				else
+				{
+					m_status = "SENDING KITS AND PATTERNS...";
+					sendDumps();
+				}
 				return;
 			}
-			m_phase = Phase::Idle;
-			// A new audition replaces an audition, never an import half done.
-			if(m_next && !m_current->source) startNext();
-			else
+			if(m_phase == Phase::Settle)
 			{
-				m_status = "SENDING KITS AND PATTERNS...";
-				sendDumps();
+				const auto sent = md::packlib::readSyx(m_current->verify).items;
+				for(const auto& item : md::packlib::readSyx(reply).items)
+					if(!sent.empty() && md::packlib::sameContent(sent.front(), item))
+					{
+						endCapture();
+						return verified();
+					}
 			}
-			return;
 		}
-		if(t - m_probeStarted > g_probeTimeoutMs)
+		else
+			m_probeStarted = t;   // waiting for the other machine's capture is not the machine's fault
+		if(t - m_probeStarted > (m_phase == Phase::Settle ? g_verifyTimeoutMs : g_probeTimeoutMs))
 		{
 			endCapture();
-			finish("MACHINE NOT RESPONDING");
+			finish(m_phase == Phase::Probe ? "MACHINE NOT RESPONDING"
+				: m_model == md::MachineModel::Monomachine
+					? "MM DID NOT RECEIVE: OPEN GLOBAL > FILE > SYSEX RECEIVE AND TRY AGAIN"
+					: "MACHINE DID NOT STORE THE DATA, TRY AGAIN");
 			return;
 		}
 		if(t - m_probeSent < g_probeIntervalMs)
 			return;
 		m_probeSent = t;
+		if(!beginCapture())
+			return;
 		// After samples the MD is busy CLEANING/LOADING and ignores other data;
-		// a kit request is answered only once the firmware is idle again.
-		if(beginCapture())
+		// a kit request is answered only once the firmware is idle again. The
+		// verification asks for the slot the last dump went to.
+		const auto& last = m_current->verify;
+		if(m_phase == Phase::Settle && last.size() > 9)
+			sendToMachine(dumpRequest(m_model, uint8_t(last[6] + 1), last[9]));
+		else
 			sendToMachine(dumpRequest(m_model, 0x53, 0));
 	}
 

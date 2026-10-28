@@ -45,6 +45,11 @@ namespace md::packlib
 	// Either machine: moves a pattern to _slot and points it at _kitSlot.
 	std::vector<uint8_t> retargetPattern(const Item& _pattern, uint8_t _slot, uint8_t _kitSlot);
 
+	// True when _readBack, a dump the machine sent back, holds what _sent put
+	// into that slot. MM data is compared decoded: the firmware may encode it
+	// differently.
+	bool sameContent(const Item& _sent, const Item& _readBack);
+
 	// Monomachine dumps carry their data 7-bit packed and run-length encoded.
 	std::optional<std::vector<uint8_t>> mmPayload(const std::vector<uint8_t>& _dump);
 	// _dump with its payload replaced by _payload, length and checksum updated.

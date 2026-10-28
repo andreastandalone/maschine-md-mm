@@ -272,6 +272,19 @@ int main(int _argc, char** _argv)
 		expected[0x426] = 20;
 		expect(mmPayload(moved) == std::optional<Bytes>(expected), "MM retarget changed other pattern bytes");
 	}
+	// sameContent: what the machine reads back matches what was sent
+	{
+		const auto sent = readSyx(mdPattern(10, 3)).items[0];
+		expect(sameContent(sent, readSyx(mdPattern(10, 3)).items[0]), "identical MD readback rejected");
+		expect(!sameContent(sent, readSyx(mdPattern(11, 3)).items[0]), "readback from another slot accepted");
+		expect(!sameContent(sent, readSyx(mdPattern(10, 4)).items[0]), "changed MD readback accepted");
+		Bytes payload(6520, 0);
+		payload[0x426] = 5;
+		const auto mmSent = readSyx(mmDump(0x67, 3, payload)).items[0];
+		expect(sameContent(mmSent, readSyx(mmDump(0x67, 3, payload)).items[0]), "identical MM readback rejected");
+		payload[100] = 1;
+		expect(!sameContent(mmSent, readSyx(mmDump(0x67, 3, payload)).items[0]), "changed MM readback accepted");
+	}
 	// junk and other models
 	{
 		expect(readSyx({0x12, 0x34, 0xf0, 0x01, 0xf7}).items.empty(), "junk produced items");

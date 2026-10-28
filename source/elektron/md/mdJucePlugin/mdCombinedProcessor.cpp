@@ -668,10 +668,10 @@ namespace mdJucePlugin
 		{
 			// A project loaded during audition is what closing the library returns to.
 			std::lock_guard lock(m_librarySnapshotMutex);
-			if(!m_librarySnapshots[0].isEmpty())
-				m_librarySnapshots[0] = mdState;
-			if(!m_librarySnapshots[1].isEmpty())
-				m_librarySnapshots[1] = mmState;
+			auto& mdSnapshot = m_librarySnapshots[index(md::MachineModel::Machinedrum)];
+			auto& mmSnapshot = m_librarySnapshots[index(md::MachineModel::Monomachine)];
+			if(!mdSnapshot.isEmpty()) mdSnapshot = mdState;
+			if(!mmSnapshot.isEmpty()) mmSnapshot = mmState;
 		}
 		static_cast<juce::AudioProcessor&>(m_machinedrum).setStateInformation(
 			mdState.getData(), static_cast<int>(mdState.getSize()));

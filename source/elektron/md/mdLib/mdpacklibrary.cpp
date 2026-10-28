@@ -237,6 +237,16 @@ namespace md::packlib
 		return retargetDump(withMmPayload(_pattern.dump, *payload), _slot);
 	}
 
+	bool sameContent(const Item& _sent, const Item& _readBack)
+	{
+		if(_sent.model != _readBack.model || _sent.kind != _readBack.kind || _sent.slot != _readBack.slot)
+			return false;
+		if(_sent.model == MachineModel::Monomachine)
+			return mmPayload(_sent.dump) == mmPayload(_readBack.dump);
+		return _sent.dump.size() == _readBack.dump.size()
+			&& std::equal(_sent.dump.begin() + 10, _sent.dump.end() - 5, _readBack.dump.begin() + 10);
+	}
+
 	std::optional<Bytes> mmPayload(const Bytes& _dump)
 	{
 		if(_dump.size() < 15) return std::nullopt;
