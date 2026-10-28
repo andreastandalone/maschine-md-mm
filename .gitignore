@@ -39,3 +39,6 @@ _copilot.bat
 target/logs/
 claude*.bat
 .mcp.json
+
+# Local handoff notes and files exchanged during development.
+/_handoff/
