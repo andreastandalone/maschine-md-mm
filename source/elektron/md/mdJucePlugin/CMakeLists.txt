@@ -23,6 +23,7 @@ set(SOURCES
 	mdLcdGesture.h
 	mdLcdInteractionModel.cpp mdLcdInteractionModel.h
 	mdLcdViewport.h
+	mdLibraryScanner.cpp mdLibraryScanner.h
 	mdMaschineNihiaClient.cpp mdMaschineNihiaClient.h
 	mdMaschineNihiaProtocol.cpp mdMaschineNihiaProtocol.h
 	mdMaschineScreenRenderer.cpp mdMaschineScreenRenderer.h
@@ -340,6 +341,12 @@ if(BUILD_TESTING)
 	target_link_libraries(mdCombinedMidiRouterTest PRIVATE mdLib)
 	add_test(NAME mdCombinedMidiRouterTest COMMAND mdCombinedMidiRouterTest)
 	set_tests_properties(mdCombinedMidiRouterTest PROPERTIES LABELS "UnitTest;Maschine")
+	add_executable(mdLibraryScannerTest mdLibraryScannerTest.cpp mdLibraryScanner.cpp)
+	target_link_libraries(mdLibraryScannerTest PRIVATE mdLib juce_plugin_modules)
+	target_compile_definitions(mdLibraryScannerTest PRIVATE JUCE_GLOBAL_MODULE_SETTINGS_INCLUDED=1)
+	add_test(NAME mdLibraryScannerTest COMMAND mdLibraryScannerTest)
+	set_tests_properties(mdLibraryScannerTest PROPERTIES LABELS "UnitTest;Library" TIMEOUT 30)
+	set_property(TARGET mdLibraryScannerTest PROPERTY FOLDER "Elektron/test")
 	add_executable(mdMaschineNihiaProtocolTest
 		mdMaschineNihiaProtocolTest.cpp mdMaschineNihiaProtocol.cpp
 		mdMaschineScreenRenderer.cpp)
