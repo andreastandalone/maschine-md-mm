@@ -27,6 +27,7 @@ namespace mdJucePlugin
 		LibrarySession(CombinedProcessor& _processor, md::MachineModel _model);
 		~LibrarySession();
 
+		// The item may be a pattern: its kit plays.
 		void playKit(const library::Pack& _pack, size_t _itemIndex);
 		void playPattern(const library::Pack& _pack, size_t _itemIndex);
 		// Copies the selected kits and patterns, with their kits and samples, to
@@ -35,6 +36,7 @@ namespace mdJucePlugin
 		void importItems(const library::Pack& _pack, std::vector<size_t> _itemIndices);
 		void service();
 		const juce::String& status() const { return m_status; }
+		bool busy() const { return m_phase != Phase::Idle || m_next; }
 		// True once anything was sent since the last import, so closing needs a restore.
 		bool changedMachine() const { return m_changed; }
 
@@ -58,6 +60,7 @@ namespace mdJucePlugin
 
 		void request(const library::Pack& _pack, const md::packlib::Item& _kit,
 			const md::packlib::Item* _pattern);
+		const md::packlib::Item* kitOf(const library::Pack& _pack, const md::packlib::Item& _item);
 		void setSamples(Request& _request, const library::Pack& _pack, const std::vector<uint8_t>& _slots);
 		void startNext();
 		void startCurrent();

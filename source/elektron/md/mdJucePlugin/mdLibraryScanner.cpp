@@ -57,11 +57,13 @@ namespace mdJucePlugin::library
 
 	std::vector<Pack> scan(const juce::File& _root, const md::MachineModel _model)
 	{
+		// Path order: when two files carry the same sample slot, the first one wins every time.
+		auto files = _root.findChildFiles(juce::File::findFiles, true, "*.syx;*.zip");
+		files.sort();
 		PackMap packs;
-		for(const auto& entry : juce::RangedDirectoryIterator(_root, true, "*.syx;*.zip", juce::File::findFiles))
+		for(const auto& file : files)
 		{
-			const auto& file = entry.getFile();
-			if(entry.getFileSize() > int64_t(md::g_midiSysexTransferMaxBytes) && file.hasFileExtension("syx"))
+			if(file.getSize() > int64_t(md::g_midiSysexTransferMaxBytes) && file.hasFileExtension("syx"))
 				continue;
 			const auto relative = file.getRelativePathFrom(_root);
 			if(file.hasFileExtension("zip"))

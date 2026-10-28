@@ -33,7 +33,9 @@ namespace mdJucePlugin
 	void LibraryView::showMachine(const md::MachineModel _model)
 	{
 		m_model = _model;
-		m_packs = library::scan(m_folder, _model);
+		// Each tab reads the folder once per library opening.
+		if(!m_scans.count(_model))
+			m_scans[_model] = library::scan(m_folder, _model);
 		m_columns[0] = {};
 		m_columns[1] = {};
 		m_focus = 0;
@@ -61,15 +63,20 @@ namespace mdJucePlugin
 		return l;
 	}
 
+	const std::vector<library::Pack>& LibraryView::packs() const
+	{
+		return m_scans.at(m_model);
+	}
+
 	int LibraryView::itemCount() const
 	{
-		return m_packs.empty() ? 0 : int(m_packs[size_t(m_columns[0].selected)].items.size());
+		return packs().empty() ? 0 : int(packs()[size_t(m_columns[0].selected)].items.size());
 	}
 
 	const md::packlib::Item* LibraryView::selectedItem() const
 	{
 		if(itemCount() == 0) return nullptr;
-		return &m_packs[size_t(m_columns[0].selected)].items[size_t(m_columns[1].selected)];
+		return &packs()[size_t(m_columns[0].selected)].items[size_t(m_columns[1].selected)];
 	}
 
 	juce::String LibraryView::itemLabel(const md::packlib::Item& _item) const
@@ -126,13 +133,14 @@ namespace mdJucePlugin
 			if(active) _g.fillRect(tab);
 			else _g.drawRect(tab);
 			_g.setColour(active ? g_background : g_text);
-			_g.drawText(model == md::MachineModel::Machinedrum ? "MACHINEDRUM" : "MONOMACHINE", tab,
-				juce::Justification::centred);
+			const auto* session = m_processor.librarySession(model);
+			const juce::String name = model == md::MachineModel::Machinedrum ? "MACHINEDRUM" : "MONOMACHINE";
+			_g.drawText(name + (!active && session && session->busy() ? " ..." : ""), tab, juce::Justification::centred);
 		}
 		_g.setColour(g_divider);
 		_g.fillRect(l.tabs.getX(), l.tabs.getBottom() - 2, l.tabs.getWidth(), 1);
 
-		if(m_packs.empty())
+		if(packs().empty())
 		{
 			_g.setColour(g_text);
 			auto area = l.packs.getUnion(l.items);
@@ -143,10 +151,10 @@ namespace mdJucePlugin
 			return;
 		}
 
-		juce::StringArray packs, items;
-		for(const auto& pack : m_packs) packs.add(pack.name);
-		for(const auto& item : m_packs[size_t(m_columns[0].selected)].items) items.add(itemLabel(item));
-		paintColumn(_g, l.packs, l.row, packs, m_columns[0], m_focus == 0, {}, false);
+		juce::StringArray names, items;
+		for(const auto& pack : packs()) names.add(pack.name);
+		for(const auto& item : packs()[size_t(m_columns[0].selected)].items) items.add(itemLabel(item));
+		paintColumn(_g, l.packs, l.row, names, m_columns[0], m_focus == 0, {}, false);
 		paintColumn(_g, l.items, l.row, items, m_columns[1], m_focus == 1, m_marked, true);
 
 		_g.setColour(g_dim);
@@ -169,10 +177,13 @@ namespace mdJucePlugin
 
 	void LibraryView::select(const int _column, const int _index)
 	{
-		const auto count = _column == 0 ? int(m_packs.size()) : itemCount();
+		const auto count = _column == 0 ? int(packs().size()) : itemCount();
 		if(count == 0) return;
 		auto& c = m_columns[_column];
-		c.selected = juce::jlimit(0, count - 1, _index);
+		const auto index = juce::jlimit(0, count - 1, _index);
+		if(_column == 0 && index == c.selected)
+			return;
+		c.selected = index;
 		const auto l = layout();
 		const auto visible = std::max(1, ((_column == 0 ? l.packs : l.items).getHeight() - 4) / l.row);
 		if(c.selected < c.first) c.first = c.selected;
@@ -195,9 +206,9 @@ namespace mdJucePlugin
 	void LibraryView::marksChanged()
 	{
 		m_hint.clear();
-		if(!m_packs.empty() && !m_marked.empty())
+		if(!packs().empty() && !m_marked.empty())
 		{
-			const auto plan = md::packlib::planImport(m_packs[size_t(m_columns[0].selected)].items, markedItems(),
+			const auto plan = md::packlib::planImport(packs()[size_t(m_columns[0].selected)].items, markedItems(),
 				std::vector<bool>(128, true), std::vector<bool>(128, true));
 			m_hint = "IMPORT: " + juce::String(int(plan.kitsNeeded)) + " KITS, "
 				+ juce::String(int(plan.patternsNeeded)) + " PATTERNS";
@@ -221,24 +232,15 @@ namespace mdJucePlugin
 
 	void LibraryView::importMarked()
 	{
-		if(auto* session = m_processor.librarySession(m_model); session && !m_packs.empty())
-			session->importItems(m_packs[size_t(m_columns[0].selected)], markedItems());
+		if(auto* session = m_processor.librarySession(m_model); session && !packs().empty())
+			session->importItems(packs()[size_t(m_columns[0].selected)], markedItems());
 	}
 
 	void LibraryView::playKit()
 	{
-		const auto* item = selectedItem();
 		auto* session = m_processor.librarySession(m_model);
-		if(!item || !session) return;
-		const auto& pack = m_packs[size_t(m_columns[0].selected)];
-		if(item->kind == md::packlib::ItemKind::Kit)
-		{
-			session->playKit(pack, size_t(m_columns[1].selected));
-			return;
-		}
-		for(size_t i = 0; i < pack.items.size(); ++i)
-			if(pack.items[i].kind == md::packlib::ItemKind::Kit && pack.items[i].slot == item->kitSlot)
-				return session->playKit(pack, i);
+		if(selectedItem() && session)
+			session->playKit(packs()[size_t(m_columns[0].selected)], size_t(m_columns[1].selected));
 	}
 
 	void LibraryView::playPattern()
@@ -246,7 +248,7 @@ namespace mdJucePlugin
 		const auto* item = selectedItem();
 		auto* session = m_processor.librarySession(m_model);
 		if(item && session && item->kind == md::packlib::ItemKind::Pattern)
-			session->playPattern(m_packs[size_t(m_columns[0].selected)], size_t(m_columns[1].selected));
+			session->playPattern(packs()[size_t(m_columns[0].selected)], size_t(m_columns[1].selected));
 	}
 
 	void LibraryView::play()
@@ -282,12 +284,14 @@ namespace mdJucePlugin
 			const auto index = m_columns[column].first + (p.y - area.getY()) / l.row;
 			if(column == 0 || index >= itemCount())
 			{
-				if(column == 0 && index < int(m_packs.size()) && index != m_columns[0].selected)
+				if(column == 0 && index < int(packs().size()) && index != m_columns[0].selected)
 					select(0, index);
 				continue;
 			}
 			// Finder-style: Cmd toggles one item, Shift extends from the cursor.
 			const auto mods = _event.mods;
+			if((mods.isCommandDown() || mods.isShiftDown()) && _event.getNumberOfClicks() > 1)
+				continue;
 			const auto anchor = m_columns[1].selected;
 			if(mods.isCommandDown())
 			{
@@ -308,14 +312,15 @@ namespace mdJucePlugin
 
 	void LibraryView::mouseDoubleClick(const juce::MouseEvent& _event)
 	{
-		if(layout().items.contains(_event.getPosition())) play();
+		if(layout().items.contains(_event.getPosition()) && !_event.mods.isCommandDown() && !_event.mods.isShiftDown())
+			play();
 	}
 
 	void LibraryView::mouseWheelMove(const juce::MouseEvent& _event, const juce::MouseWheelDetails& _wheel)
 	{
 		const auto l = layout();
 		const int column = l.items.contains(_event.getPosition()) ? 1 : 0;
-		const auto count = column == 0 ? int(m_packs.size()) : itemCount();
+		const auto count = column == 0 ? int(packs().size()) : itemCount();
 		const auto visible = ((column == 0 ? l.packs : l.items).getHeight() - 4) / l.row;
 		auto& c = m_columns[column];
 		if(_wheel.deltaY == 0) return;
@@ -351,10 +356,13 @@ namespace mdJucePlugin
 		for(const auto model : {md::MachineModel::Machinedrum, md::MachineModel::Monomachine})
 			if(auto* session = m_processor.librarySession(model))
 				session->service();
-		const auto* session = m_processor.librarySession(m_model);
-		if(session && session->status() != m_shownStatus)
+		juce::String shown;
+		for(const auto model : {md::MachineModel::Machinedrum, md::MachineModel::Monomachine})
+			if(const auto* session = m_processor.librarySession(model))
+				shown << session->status() << (session->busy() ? "*" : "") << "\n";
+		if(shown != m_shownStatus)
 		{
-			m_shownStatus = session->status();
+			m_shownStatus = shown;
 			repaint();
 		}
 	}

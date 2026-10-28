@@ -324,7 +324,8 @@ namespace md::packlib
 		ImportPlan plan;
 		for(const auto index : _selected)
 		{
-			const auto& item = _pack.at(index);
+			if(index >= _pack.size()) continue;
+			const auto& item = _pack[index];
 			const auto kit = item.kind == ItemKind::Kit ? _pack.begin() + ptrdiff_t(index) : findKit(item.kitSlot);
 			if(kit == _pack.end()) { ++plan.skippedPatterns; continue; }
 			if(std::find(kits.begin(), kits.end(), &*kit) == kits.end()) kits.push_back(&*kit);

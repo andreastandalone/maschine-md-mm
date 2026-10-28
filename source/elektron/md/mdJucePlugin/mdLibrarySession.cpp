@@ -73,8 +73,12 @@ namespace mdJucePlugin
 		endCapture();
 		// Never leave a key held down by a key sequence cut short.
 		if(m_phase == Phase::Panel)
-			for(uint8_t row = 0x20; row <= 0x26; ++row)
-				(void)machine().sendPanelEvent(row, 0);
+		{
+			std::map<uint8_t, uint8_t> held;
+			for(size_t i = 0; i < m_panelNext; ++i) held[m_panel[i].row] = m_panel[i].mask;
+			for(const auto& [row, mask] : held)
+				if(mask) (void)machine().sendPanelEvent(row, 0);
+		}
 		if(!m_ticket)
 			return;
 		std::vector<uint8_t> retired;
@@ -87,22 +91,27 @@ namespace mdJucePlugin
 
 	void LibrarySession::playKit(const library::Pack& _pack, const size_t _itemIndex)
 	{
-		request(_pack, _pack.items.at(_itemIndex), nullptr);
+		if(const auto* kit = kitOf(_pack, _pack.items.at(_itemIndex)))
+			request(_pack, *kit, nullptr);
 	}
 
 	void LibrarySession::playPattern(const library::Pack& _pack, const size_t _itemIndex)
 	{
 		const auto& pattern = _pack.items.at(_itemIndex);
-		const auto kit = std::find_if(_pack.items.begin(), _pack.items.end(), [&](const auto& _item)
-		{
-			return _item.kind == md::packlib::ItemKind::Kit && _item.slot == pattern.kitSlot;
-		});
-		if(kit == _pack.items.end())
-		{
-			m_status = "KIT " + juce::String(pattern.kitSlot + 1) + " NOT IN THIS PACK";
-			return;
-		}
-		request(_pack, *kit, &pattern);
+		if(const auto* kit = kitOf(_pack, pattern))
+			request(_pack, *kit, &pattern);
+	}
+
+	// A kit is its own kit; a pattern's kit must be in the same pack.
+	const md::packlib::Item* LibrarySession::kitOf(const library::Pack& _pack, const md::packlib::Item& _item)
+	{
+		if(_item.kind == md::packlib::ItemKind::Kit)
+			return &_item;
+		for(const auto& kit : _pack.items)
+			if(kit.kind == md::packlib::ItemKind::Kit && kit.slot == _item.kitSlot)
+				return &kit;
+		m_status = "KIT " + juce::String(_item.kitSlot + 1) + " NOT IN THIS PACK";
+		return nullptr;
 	}
 
 	void LibrarySession::request(const library::Pack& _pack, const md::packlib::Item& _kit,
@@ -134,6 +143,13 @@ namespace mdJucePlugin
 	{
 		if(_itemIndices.empty())
 			return;
+		// Kits are known from the pack alone: no need to read the machine first.
+		const auto all = std::vector<bool>(128, true);
+		if(md::packlib::planImport(_pack.items, _itemIndices, all, all).dumps.empty())
+		{
+			m_status = "NOTHING TO IMPORT: PATTERN KITS NOT IN THIS PACK";
+			return;
+		}
 		Request r;
 		r.pack = _pack.name;
 		r.source = std::make_shared<const library::Pack>(_pack);
@@ -216,6 +232,7 @@ namespace mdJucePlugin
 			m_machineItems.push_back(std::move(item));
 			++m_inventoryNext;
 			m_probeSent = 0;
+			m_probeStarted = t;
 		}
 		if(m_inventoryNext == kitCount() + g_patternCount)
 		{
@@ -223,7 +240,7 @@ namespace mdJucePlugin
 			planCurrentImport();
 			return;
 		}
-		if(t - m_probeStarted > g_probeTimeoutMs * 1.5)
+		if(t - m_probeStarted > g_verifyTimeoutMs)
 		{
 			endCapture();
 			finish("MACHINE NOT RESPONDING");
@@ -240,7 +257,9 @@ namespace mdJucePlugin
 	void LibrarySession::planCurrentImport()
 	{
 		auto& r = *m_current;
-		const auto slots = md::packlib::freeSlots(m_machineItems);
+		auto slots = md::packlib::freeSlots(m_machineItems);
+		// Auditions keep writing there while the library is open.
+		slots.freeKits[auditionKitSlot()] = slots.freePatterns[g_patternSlot] = false;
 		const auto plan = md::packlib::planImport(r.source->items, r.selected, slots.freeKits, slots.freePatterns);
 		if(!plan.enoughSlots)
 		{
@@ -249,11 +268,6 @@ namespace mdJucePlugin
 			finish("NOT ENOUGH FREE SLOTS: NEED " + juce::String(int(plan.kitsNeeded)) + " KITS AND "
 				+ juce::String(int(plan.patternsNeeded)) + " PATTERNS, FREE " + juce::String(int(freeKits))
 				+ " KITS AND " + juce::String(int(freePatterns)) + " PATTERNS");
-			return;
-		}
-		if(plan.dumps.empty())
-		{
-			finish("NOTHING TO IMPORT: PATTERN KITS NOT IN THIS PACK");
 			return;
 		}
 		setSamples(r, *r.source, plan.sampleSlots);
@@ -380,7 +394,7 @@ namespace mdJucePlugin
 		then();
 	}
 
-	// On failure the request stays current and service() retries it.
+	// A busy or booting machine gets the request back in the queue for service() to retry.
 	bool LibrarySession::startTransfer(std::vector<uint8_t> _bytes, const bool _receiveModeConfirmed)
 	{
 		auto prepared = md::prepareMidiSysexTransfer(std::move(_bytes), m_model);
@@ -409,13 +423,17 @@ namespace mdJucePlugin
 			m_changed = true;
 			return true;
 		}
-		// Retry later; an import that already started is not given up for an audition.
+		if(!result)
+		{
+			finish("MACHINE NOT AVAILABLE");
+			return false;
+		}
+		// Retry on the next tick; an import that already started is not given up for an audition.
 		if(!m_next || m_current->source)
 			m_next = std::move(m_current);
 		m_current.reset();
 		m_status = result == Start::NotReady || result == Start::Initializing || result == Start::Restoring
 			? "WAIT: MACHINE IS BOOTING" : "WAIT";
-		if(!result) finish("MACHINE NOT AVAILABLE");
 		return false;
 	}
 

@@ -18,6 +18,8 @@ namespace mdJucePlugin
 	{
 		constexpr uint32_t g_stateMagic = 0x4d444d4d;
 		constexpr int g_stateVersion = 1;
+		// One request is outstanding at a time and replies are taken every tick.
+		constexpr size_t g_privateCaptureBytes = 64 * 1024;
 
 		// Each machine renders the hardware's six output jacks, A to F.
 		constexpr int g_machineChannels = 6;
@@ -117,7 +119,8 @@ namespace mdJucePlugin
 		{
 			std::lock_guard lock(m_captureMutex);
 			m_captureBytes.clear();
-			m_captureBytes.reserve(md::g_midiSysexTransferMaxBytes);
+			// The library only reads single dumps back; a file export may need all of it.
+			m_captureBytes.reserve(_toHost ? md::g_midiSysexTransferMaxBytes : g_privateCaptureBytes);
 			m_captureIncomplete.store(false, std::memory_order_relaxed);
 			m_captureModel.store(_model, std::memory_order_release);
 			m_captureToHost.store(_toHost, std::memory_order_release);
@@ -249,7 +252,8 @@ namespace mdJucePlugin
 			}
 			if(!m_captureEnabled.load(std::memory_order_relaxed))
 				return;
-			if(size > md::g_midiSysexTransferMaxBytes - m_captureBytes.size())
+			// Never past the reserved capacity: the audio thread must not allocate.
+			if(size > m_captureBytes.capacity() - m_captureBytes.size())
 			{
 				m_captureIncomplete.store(true, std::memory_order_relaxed);
 				continue;

@@ -17,8 +17,9 @@ namespace md
 
 	namespace panelScript
 	{
+		// 46 ms each: the MM 1.32b firmware still followed 23 ms and missed keys at 6 ms.
 		constexpr uint32_t g_pressFrames = 2048;
-		constexpr uint32_t g_settleFrames = 6400;
+		constexpr uint32_t g_settleFrames = 2048;
 
 		inline void tap(std::vector<PanelStep>& _script, const MachineModel _model, const PanelControl _control, const unsigned _times = 1)
 		{

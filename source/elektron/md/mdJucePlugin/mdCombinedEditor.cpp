@@ -31,8 +31,9 @@ namespace mdJucePlugin
 		juce::PopupMenu getMenuForIndex(int, const juce::String&) override
 		{
 			juce::PopupMenu menu;
+			// The library owns both machines' SysEx while it is open.
 			const bool saving = owner.m_processor.isSysexCapturing()
-				|| owner.m_sysexSaveChooserOpen;
+				|| owner.m_sysexSaveChooserOpen || owner.m_libraryView;
 			const auto* mdEditor = owner.editorFor(false);
 			const auto* mmEditor = owner.editorFor(true);
 			const bool sending = (mdEditor && mdEditor->isUserSysexTransferActive())
@@ -60,10 +61,8 @@ namespace mdJucePlugin
 			}
 			else
 			{
-				menu.addItem(SaveMd, "Save Machinedrum SysEx Dump...",
-					!sending && !owner.m_sysexSaveChooserOpen);
-				menu.addItem(SaveMm, "Save Monomachine SysEx Dump...",
-					!sending && !owner.m_sysexSaveChooserOpen);
+				menu.addItem(SaveMd, "Save Machinedrum SysEx Dump...", !sending && !saving);
+				menu.addItem(SaveMm, "Save Monomachine SysEx Dump...", !sending && !saving);
 			}
 			menu.addSeparator();
 			juce::PopupMenu reset;
@@ -322,6 +321,14 @@ namespace mdJucePlugin
 	void CombinedEditor::toggleLibrary()
 	{
 		const bool open = !m_libraryView;
+		// A File menu SysEx transfer or dump save keeps the machines until it ends.
+		if(open && (m_processor.isSysexCapturing() || m_sysexSaveChooserOpen
+			|| (editorFor(false) && editorFor(false)->isUserSysexTransferActive())
+			|| (editorFor(true) && editorFor(true)->isUserSysexTransferActive())))
+		{
+			m_libraryButton.setToggleState(false, juce::dontSendNotification);
+			return;
+		}
 		if(open)
 		{
 			m_processor.openLibrary();
@@ -336,6 +343,7 @@ namespace mdJucePlugin
 		for(auto* editor : {m_mdEditor.get(), m_mmEditor.get()})
 			if(editor) editor->setVisible(!open);
 		m_libraryButton.setToggleState(open, juce::dontSendNotification);
+		if(m_sysexMenu) m_sysexMenu->menuItemsChanged();
 		resized();
 		if(open)
 			m_libraryView->grabKeyboardFocus();

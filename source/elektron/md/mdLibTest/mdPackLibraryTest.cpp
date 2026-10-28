@@ -189,6 +189,20 @@ int main(int _argc, char** _argv)
 		const auto c = readSyx(bytes);
 		expect(c.samples.size() == 1 && c.samples[0].bytes == sample, "trailing sample name kept in sample");
 	}
+	// sampleSlotBounds: the MD has 48 sample slots; 300 must not wrap to 44
+	{
+		for(const uint16_t slot : {48, 300})
+		{
+			Bytes bytes = sdsHeader(slot, 80);
+			append(bytes, sdsPacket(0));
+			expect(readSyx(bytes).samples.empty(), "sample beyond slot 48 kept");
+		}
+	}
+	// planImportBadIndex: an index past the pack is ignored, not thrown
+	{
+		const auto plan = planImport(readSyx(kit).items, {0, 7}, std::vector<bool>(64, true), std::vector<bool>(128, true));
+		expect(plan.kitsNeeded == 1 && plan.enoughSlots, "bad index broke the plan");
+	}
 	// emptySlots: a kit without a name and a pattern without trigs are free
 	{
 		expect(!readSyx(kit).items[0].empty, "named kit read as empty");

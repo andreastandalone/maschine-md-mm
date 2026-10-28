@@ -4,6 +4,7 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
+#include <map>
 #include <set>
 
 namespace mdJucePlugin
@@ -40,6 +41,7 @@ namespace mdJucePlugin
 		void showMachine(md::MachineModel _model);
 		Layout layout() const;
 		juce::Rectangle<int> tabBounds(const Layout& _layout, md::MachineModel _model) const;
+		const std::vector<library::Pack>& packs() const;
 		int itemCount() const;
 		juce::String itemLabel(const md::packlib::Item& _item) const;
 		const md::packlib::Item* selectedItem() const;
@@ -57,11 +59,11 @@ namespace mdJucePlugin
 		CombinedProcessor& m_processor;
 		juce::File m_folder;
 		md::MachineModel m_model = md::MachineModel::Machinedrum;
-		std::vector<library::Pack> m_packs;
+		std::map<md::MachineModel, std::vector<library::Pack>> m_scans;
 		Column m_columns[2];
 		int m_focus = 0;
 		std::set<int> m_marked;                  // items picked for IMPORT
-		juce::String m_shownStatus;
+		juce::String m_shownStatus;              // both machines, to repaint on any change
 		juce::String m_hint;
 	};
 }
