@@ -43,7 +43,7 @@ namespace mdJucePlugin
 		juce::File m_sysexSaveFile;
 		std::unique_ptr<juce::AudioProcessorEditor> m_mdEditor;
 		std::unique_ptr<juce::AudioProcessorEditor> m_mmEditor;
-		juce::TextButton m_libraryButton{"LIBRERIA"};
+		juce::TextButton m_libraryButton{"LIBRARY"};
 		juce::TextButton m_midiButton;
 		// Replaces both machine panels while open: they are native views that
 		// would cover any sibling drawn over them.

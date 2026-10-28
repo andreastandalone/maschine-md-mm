@@ -344,7 +344,7 @@ namespace mdJucePlugin
 	void CombinedEditor::updateMidiButton()
 	{
 		const bool byChannel = m_processor.midiByChannel();
-		m_midiButton.setButtonText(byChannel ? "MIDI: CANALI" : "MIDI: FOCUS");
+		m_midiButton.setButtonText(byChannel ? "MIDI: CHANNELS" : "MIDI: FOCUS");
 		m_midiButton.setToggleState(byChannel, juce::dontSendNotification);
 	}
 

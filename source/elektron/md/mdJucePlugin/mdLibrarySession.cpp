@@ -89,7 +89,7 @@ namespace mdJucePlugin
 		});
 		if(kit == _pack.items.end())
 		{
-			m_status = "KIT " + juce::String(pattern.kitSlot + 1) + " NON TROVATO NEL PACK";
+			m_status = "KIT " + juce::String(pattern.kitSlot + 1) + " NOT IN THIS PACK";
 			return;
 		}
 		request(_pack, *kit, &pattern);
@@ -107,12 +107,12 @@ namespace mdJucePlugin
 			const auto pattern = md::packlib::retargetMdPattern(_pattern->dump, g_patternSlot, g_kitSlot);
 			r.dumps.insert(r.dumps.end(), pattern.begin(), pattern.end());
 			r.load = md::packlib::loadPatternCommand(g_model, g_patternSlot);
-			r.loaded = _pattern->name + " CARICATO";
+			r.loaded = _pattern->name + " LOADED";
 		}
 		else
 		{
 			r.load = md::packlib::loadKitCommand(g_model, g_kitSlot);
-			r.loaded = "KIT " + juce::String(_kit.name).toUpperCase() + " CARICATO";
+			r.loaded = "KIT " + juce::String(_kit.name).toUpperCase() + " LOADED";
 		}
 		m_next = std::move(r);
 		if(m_phase == Phase::Idle)
@@ -178,7 +178,7 @@ namespace mdJucePlugin
 		{
 			m_next = std::move(m_current);
 			m_current.reset();
-			m_status = "ATTENDI";
+			m_status = "WAIT";
 			return;
 		}
 		m_machineItems.clear();
@@ -186,7 +186,7 @@ namespace mdJucePlugin
 		m_phase = Phase::Inventory;
 		m_probeStarted = now();
 		m_probeSent = 0;
-		m_status = "LETTURA SLOT LIBERI...";
+		m_status = "READING FREE SLOTS...";
 	}
 
 	// One request at a time: the firmware answers each in a few milliseconds,
@@ -214,7 +214,7 @@ namespace mdJucePlugin
 		if(t - m_probeStarted > g_probeTimeoutMs * 1.5)
 		{
 			endCapture();
-			finish("LA MACCHINA NON RISPONDE");
+			finish("MACHINE NOT RESPONDING");
 			return;
 		}
 		if(m_probeSent == 0 || t - m_probeSent >= g_probeIntervalMs)
@@ -233,25 +233,25 @@ namespace mdJucePlugin
 		{
 			const auto freeKits = std::count(slots.freeKits.begin(), slots.freeKits.end(), true);
 			const auto freePatterns = std::count(slots.freePatterns.begin(), slots.freePatterns.end(), true);
-			finish("SLOT LIBERI INSUFFICIENTI: SERVONO " + juce::String(int(plan.kitsNeeded)) + " KIT E "
-				+ juce::String(int(plan.patternsNeeded)) + " PATTERN, LIBERI " + juce::String(int(freeKits))
-				+ " KIT E " + juce::String(int(freePatterns)) + " PATTERN");
+			finish("NOT ENOUGH FREE SLOTS: NEED " + juce::String(int(plan.kitsNeeded)) + " KITS AND "
+				+ juce::String(int(plan.patternsNeeded)) + " PATTERNS, FREE " + juce::String(int(freeKits))
+				+ " KITS AND " + juce::String(int(freePatterns)) + " PATTERNS");
 			return;
 		}
 		if(plan.dumps.empty())
 		{
-			finish("NIENTE DA IMPORTARE: KIT DEL PATTERN NON NEL PACK");
+			finish("NOTHING TO IMPORT: PATTERN KITS NOT IN THIS PACK");
 			return;
 		}
 		setSamples(r, *r.source, plan.sampleSlots);
 		r.dumps = plan.dumps;
-		r.loaded = "IMPORTATI KIT " + slotList(plan.kitSlots, [](uint8_t _s) { return juce::String(_s + 1).paddedLeft('0', 2); });
+		r.loaded = "IMPORTED KIT " + slotList(plan.kitSlots, [](uint8_t _s) { return juce::String(_s + 1).paddedLeft('0', 2); });
 		if(!plan.patternSlots.empty())
 			r.loaded << "  PATTERN " << slotList(plan.patternSlots, patternLabel);
 		if(!plan.sampleSlots.empty())
-			r.loaded << "  CAMPIONI " << slotList(plan.sampleSlots, [](uint8_t _s) { return juce::String(_s + 1); });
+			r.loaded << "  SAMPLES " << slotList(plan.sampleSlots, [](uint8_t _s) { return juce::String(_s + 1); });
 		if(plan.skippedPatterns)
-			r.loaded << "  (" << int(plan.skippedPatterns) << " PATTERN SENZA KIT SALTATI)";
+			r.loaded << "  (" << int(plan.skippedPatterns) << " PATTERNS WITHOUT KIT SKIPPED)";
 		m_phase = Phase::Idle;
 		startCurrent();
 	}
@@ -275,7 +275,7 @@ namespace mdJucePlugin
 			if(startTransfer(std::move(samples), true))
 			{
 				m_phase = Phase::Samples;
-				m_status = "INVIO " + juce::String(int(count)) + " CAMPIONI";
+				m_status = "SENDING " + juce::String(int(count)) + " SAMPLES";
 			}
 			return;
 		}
@@ -289,7 +289,7 @@ namespace mdJucePlugin
 		auto prepared = md::prepareMidiSysexTransfer(std::move(_bytes), g_model);
 		if(!prepared)
 		{
-			finish("FILE NON VALIDO");
+			finish("INVALID FILE");
 			return false;
 		}
 		using Start = md::SysexImportStartResult;
@@ -317,8 +317,8 @@ namespace mdJucePlugin
 			m_next = std::move(m_current);
 		m_current.reset();
 		m_status = result == Start::NotReady || result == Start::Initializing || result == Start::Restoring
-			? "ATTENDI: LA MACCHINA SI STA AVVIANDO" : "ATTENDI";
-		if(!result) finish("MACCHINA NON DISPONIBILE");
+			? "WAIT: MACHINE IS BOOTING" : "WAIT";
+		if(!result) finish("MACHINE NOT AVAILABLE");
 		return false;
 	}
 
@@ -331,12 +331,12 @@ namespace mdJucePlugin
 		if(!progress || progress->ticket != *m_ticket || progress->stage == md::SysexImportStage::Invalidated)
 		{
 			m_ticket.reset();
-			finish("MACCHINA RIAVVIATA, RIPROVA");
+			finish("MACHINE RESTARTED, TRY AGAIN");
 			return;
 		}
 		using Stage = md::SysexImportStage;
 		if(m_phase == Phase::Samples && progress->state == md::MidiSysexTransferState::Sending && progress->total)
-			m_status = "INVIO CAMPIONI " + juce::String(int(progress->sent * 100 / progress->total)) + "%";
+			m_status = "SENDING SAMPLES " + juce::String(int(progress->sent * 100 / progress->total)) + "%";
 		if(progress->stage != Stage::DeliveredUnverified && progress->stage != Stage::Failed
 			&& progress->stage != Stage::Cancelled)
 			return;
@@ -349,7 +349,7 @@ namespace mdJucePlugin
 		m_ticket.reset();
 		if(progress->stage != Stage::DeliveredUnverified)
 		{
-			finish(progress->stage == Stage::Failed ? "INVIO FALLITO" : "INVIO ANNULLATO");
+			finish(progress->stage == Stage::Failed ? "SEND FAILED" : "SEND CANCELLED");
 			return;
 		}
 		if(m_phase == Phase::Samples)
@@ -360,19 +360,19 @@ namespace mdJucePlugin
 			for(const auto& sample : m_current->samples)
 				m_sentSamples[sample.slot] = m_current->pack;
 			startProbe(Phase::Probe);
-			m_status = "LA MACCHINA SALVA I CAMPIONI...";
+			m_status = "MACHINE IS STORING SAMPLES...";
 			return;
 		}
 		if(m_current->source)
 		{
 			// The last pattern is stored once the firmware answers again.
 			startProbe(Phase::Settle);
-			m_status = "SALVATAGGIO...";
+			m_status = "STORING...";
 			return;
 		}
 		sendToMachine(m_current->load);
 		finish(m_current->missing.isEmpty() ? m_current->loaded
-			: m_current->loaded + "  CAMPIONI MANCANTI: " + m_current->missing);
+			: m_current->loaded + "  MISSING SAMPLES: " + m_current->missing);
 	}
 
 	void LibrarySession::startProbe(const Phase _phase)
@@ -393,7 +393,7 @@ namespace mdJucePlugin
 				m_processor.commitLibrarySnapshot();
 				m_changed = false;
 				finish(m_current->missing.isEmpty() ? m_current->loaded
-					: m_current->loaded + "  CAMPIONI MANCANTI: " + m_current->missing);
+					: m_current->loaded + "  MISSING SAMPLES: " + m_current->missing);
 				return;
 			}
 			m_phase = Phase::Idle;
@@ -402,14 +402,14 @@ namespace mdJucePlugin
 			else if(startTransfer(m_current->dumps, false))
 			{
 				m_phase = Phase::Dumps;
-				m_status = "INVIO KIT E PATTERN...";
+				m_status = "SENDING KITS AND PATTERNS...";
 			}
 			return;
 		}
 		if(t - m_probeStarted > g_probeTimeoutMs)
 		{
 			endCapture();
-			finish("LA MACCHINA NON RISPONDE");
+			finish("MACHINE NOT RESPONDING");
 			return;
 		}
 		if(t - m_probeSent < g_probeIntervalMs)

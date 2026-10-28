@@ -68,7 +68,7 @@ namespace mdJucePlugin
 			return juce::String(_item.name.substr(8)) + "  PATTERN    KIT " + twoDigits(_item.kitSlot + 1);
 		auto label = "K" + twoDigits(_item.slot + 1) + "  " + juce::String(_item.name).toUpperCase();
 		if(!_item.sampleSlots.empty())
-			label << "  +" << int(_item.sampleSlots.size()) << " CAMPIONI";
+			label << "  +" << int(_item.sampleSlots.size()) << " SAMPLES";
 		return label;
 	}
 
@@ -108,7 +108,7 @@ namespace mdJucePlugin
 		const auto l = layout();
 		_g.setFont(font(l.row));
 
-		// Tabs: MD active, MM disabled until passo 2.
+		// Tabs: MD active, MM disabled until the Monomachine library exists.
 		const auto tabWidth = l.tabs.getWidth() / 4;
 		const auto mdTab = l.tabs.withWidth(tabWidth).withTrimmedBottom(l.row / 3);
 		_g.setColour(g_text);
@@ -116,7 +116,7 @@ namespace mdJucePlugin
 		_g.setColour(g_background);
 		_g.drawText("MACHINEDRUM", mdTab, juce::Justification::centred);
 		_g.setColour(g_dim);
-		_g.drawText("MM: PROSSIMAMENTE", mdTab.translated(tabWidth + l.row / 2, 0), juce::Justification::centred);
+		_g.drawText("MM: COMING SOON", mdTab.translated(tabWidth + l.row / 2, 0), juce::Justification::centred);
 		_g.setColour(g_divider);
 		_g.fillRect(l.tabs.getX(), l.tabs.getBottom() - 2, l.tabs.getWidth(), 1);
 
@@ -124,9 +124,9 @@ namespace mdJucePlugin
 		{
 			_g.setColour(g_text);
 			auto area = l.packs.getUnion(l.items);
-			_g.drawText("NESSUN PACK IN LIBRARY", area.removeFromTop(l.row * 2), juce::Justification::centredLeft);
+			_g.drawText("NO PACKS IN LIBRARY", area.removeFromTop(l.row * 2), juce::Justification::centredLeft);
 			_g.setColour(g_dim);
-			_g.drawFittedText("COPIA I PACK IN:\n" + m_folder.getFullPathName(), area.removeFromTop(l.row * 3),
+			_g.drawFittedText("COPY PACKS TO:\n" + m_folder.getFullPathName(), area.removeFromTop(l.row * 3),
 				juce::Justification::topLeft, 3);
 			return;
 		}
@@ -150,9 +150,9 @@ namespace mdJucePlugin
 			_g.drawRect(_r, 2);
 			_g.drawText(_text, _r, juce::Justification::centred);
 		};
-		button(l.playKit, "SUONA KIT", item != nullptr);
-		button(l.playPattern, "SUONA PATTERN", item && item->kind == md::packlib::ItemKind::Pattern);
-		button(l.import, "IMPORTA", !m_marked.empty());
+		button(l.playKit, "PLAY KIT", item != nullptr);
+		button(l.playPattern, "PLAY PATTERN", item && item->kind == md::packlib::ItemKind::Pattern);
+		button(l.import, "IMPORT", !m_marked.empty());
 	}
 
 	void LibraryView::select(const int _column, const int _index)
@@ -178,7 +178,7 @@ namespace mdJucePlugin
 		return items;
 	}
 
-	// What IMPORTA will copy and which sample slots it overwrites, from the same
+	// What IMPORT will copy and which sample slots it overwrites, from the same
 	// plan the import uses, as if every slot were free.
 	void LibraryView::marksChanged()
 	{
@@ -187,13 +187,13 @@ namespace mdJucePlugin
 		{
 			const auto plan = md::packlib::planImport(m_packs[size_t(m_columns[0].selected)].items, markedItems(),
 				std::vector<bool>(64, true), std::vector<bool>(128, true));
-			m_hint = "IMPORTA: " + juce::String(int(plan.kitsNeeded)) + " KIT, "
-				+ juce::String(int(plan.patternsNeeded)) + " PATTERN";
+			m_hint = "IMPORT: " + juce::String(int(plan.kitsNeeded)) + " KITS, "
+				+ juce::String(int(plan.patternsNeeded)) + " PATTERNS";
 			if(plan.skippedPatterns)
-				m_hint << " (" << int(plan.skippedPatterns) << " SENZA KIT)";
+				m_hint << " (" << int(plan.skippedPatterns) << " WITHOUT KIT)";
 			if(!plan.sampleSlots.empty())
 			{
-				m_hint << "  -  SOSTITUISCE I CAMPIONI";
+				m_hint << "  -  REPLACES SAMPLES";
 				for(size_t i = 0; i < plan.sampleSlots.size();)
 				{
 					size_t j = i;

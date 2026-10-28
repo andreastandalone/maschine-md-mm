@@ -56,7 +56,7 @@ namespace mdJucePlugin
 		std::vector<library::Pack> m_packs;
 		Column m_columns[2];
 		int m_focus = 0;
-		std::set<int> m_marked;                  // items picked for IMPORTA
+		std::set<int> m_marked;                  // items picked for IMPORT
 		juce::String m_shownStatus;
 		juce::String m_hint;
 	};
