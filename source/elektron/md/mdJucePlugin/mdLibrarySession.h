@@ -63,6 +63,8 @@ namespace mdJucePlugin
 		bool startTransfer(std::vector<uint8_t> _bytes, bool _samples);
 		void serviceTransfer();
 		void startProbe(Phase _phase);
+		bool beginCapture();
+		void endCapture();
 		void serviceProbe();
 		void sendToMachine(const std::vector<uint8_t>& _sysex);
 		void finish(const juce::String& _status);
@@ -76,8 +78,8 @@ namespace mdJucePlugin
 		std::map<uint8_t, juce::String> m_sentSamples;  // slot -> pack it came from
 		uint64_t m_sentSamplesEpoch = 0;                // machine they were sent to
 		size_t m_inventoryNext = 0;                     // 0-63 kits, then 64-191 patterns
-		std::vector<bool> m_freeKits;
-		std::vector<bool> m_freePatterns;
+		std::vector<md::packlib::Item> m_machineItems;  // inventory replies, without dumps
+		bool m_ownsCapture = false;
 		double m_probeStarted = 0;
 		double m_probeSent = 0;
 		bool m_changed = false;

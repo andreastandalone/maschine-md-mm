@@ -193,6 +193,20 @@ namespace md::packlib
 		return retargetDump(std::move(_dump), _slot);
 	}
 
+	FreeSlots freeSlots(const std::vector<Item>& _machine)
+	{
+		FreeSlots slots;
+		for(const auto& item : _machine)
+		{
+			auto& table = item.kind == ItemKind::Kit ? slots.freeKits : slots.freePatterns;
+			if(item.slot < table.size()) table[item.slot] = item.empty;
+		}
+		for(const auto& item : _machine)
+			if(item.kind == ItemKind::Pattern && !item.empty && item.kitSlot < slots.freeKits.size())
+				slots.freeKits[item.kitSlot] = false;
+		return slots;
+	}
+
 	ImportPlan planImport(const std::vector<Item>& _pack, const std::vector<size_t>& _selected,
 		const std::vector<bool>& _freeKits, const std::vector<bool>& _freePatterns)
 	{

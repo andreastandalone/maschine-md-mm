@@ -186,6 +186,19 @@ int main(int _argc, char** _argv)
 		sealDump(used);
 		expect(!readSyx(used).items[0].empty, "pattern with a trig read as empty");
 	}
+	// freeSlots: an empty kit that a used pattern plays is not free
+	{
+		std::vector<Item> machine;
+		auto used = mdPattern(0, 5);
+		used[0x0b] = 0x01;
+		sealDump(used);
+		for(const auto& d : {mdKit(4, "", {}), mdKit(5, "", {}), mdKit(6, "NAMED", {}), used, mdPattern(1, 4)})
+			machine.push_back(readSyx(d).items[0]);
+		const auto slots = freeSlots(machine);
+		expect(slots.freeKits.size() == 64 && slots.freePatterns.size() == 128, "slot tables wrong size");
+		expect(slots.freeKits[4] && !slots.freeKits[5] && !slots.freeKits[6], "kit used by a pattern judged free");
+		expect(!slots.freePatterns[0] && slots.freePatterns[1] && !slots.freeKits[0], "pattern occupancy wrong");
+	}
 	// planImport: kits go to free kit slots, patterns to free pattern slots and
 	// follow their kit; a pattern whose kit is not in the pack is skipped
 	{

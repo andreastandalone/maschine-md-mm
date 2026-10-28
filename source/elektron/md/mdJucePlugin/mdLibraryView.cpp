@@ -27,6 +27,7 @@ namespace mdJucePlugin
 	{
 		setWantsKeyboardFocus(true);
 		if(itemCount()) m_marked = {0};
+		marksChanged();
 		// Reading the machine's free slots waits on one reply per tick.
 		startTimer(10);
 	}
@@ -73,7 +74,7 @@ namespace mdJucePlugin
 
 	void LibraryView::paintColumn(juce::Graphics& _g, const juce::Rectangle<int> _area, const int _row,
 		const juce::StringArray& _rows, const Column& _column, const bool _focused,
-		const std::set<int>& _marked) const
+		const std::set<int>& _marked, const bool _marksItems) const
 	{
 		_g.setColour(g_divider);
 		_g.drawRect(_area);
@@ -83,11 +84,18 @@ namespace mdJucePlugin
 		{
 			const auto index = _column.first + i;
 			const juce::Rectangle<int> r(inner.getX(), inner.getY() + i * _row, inner.getWidth(), _row);
-			const bool selected = index == _column.selected || _marked.count(index);
+			// The packs column shows its cursor; the items column shows what is
+			// marked, with an outline for the cursor.
+			const bool selected = _marksItems ? _marked.count(index) > 0 : index == _column.selected;
 			if(selected)
 			{
 				_g.setColour(_focused ? g_text : g_dim);
 				_g.fillRect(r);
+			}
+			else if(_marksItems && _focused && index == _column.selected)
+			{
+				_g.setColour(g_dim);
+				_g.drawRect(r);
 			}
 			_g.setColour(selected ? g_background : g_text);
 			_g.drawText(_rows[index], r.reduced(_row / 3, 0), juce::Justification::centredLeft, true);
@@ -126,11 +134,11 @@ namespace mdJucePlugin
 		juce::StringArray packs, items;
 		for(const auto& pack : m_packs) packs.add(pack.name);
 		for(const auto& item : m_packs[size_t(m_columns[0].selected)].items) items.add(itemLabel(item));
-		paintColumn(_g, l.packs, l.row, packs, m_columns[0], m_focus == 0, {});
-		paintColumn(_g, l.items, l.row, items, m_columns[1], m_focus == 1, m_marked);
+		paintColumn(_g, l.packs, l.row, packs, m_columns[0], m_focus == 0, {}, false);
+		paintColumn(_g, l.items, l.row, items, m_columns[1], m_focus == 1, m_marked, true);
 
 		_g.setColour(g_dim);
-		_g.drawText(importHint(), l.hint, juce::Justification::centredLeft, true);
+		_g.drawText(m_hint, l.hint, juce::Justification::centredLeft, true);
 		const auto* session = m_processor.librarySession();
 		_g.setColour(g_text);
 		_g.drawText(session ? session->status() : juce::String(), l.status, juce::Justification::centredLeft, true);
@@ -144,7 +152,7 @@ namespace mdJucePlugin
 		};
 		button(l.playKit, "SUONA KIT", item != nullptr);
 		button(l.playPattern, "SUONA PATTERN", item && item->kind == md::packlib::ItemKind::Pattern);
-		button(l.import, "IMPORTA", item != nullptr);
+		button(l.import, "IMPORTA", !m_marked.empty());
 	}
 
 	void LibraryView::select(const int _column, const int _index)
@@ -159,7 +167,7 @@ namespace mdJucePlugin
 		if(c.selected >= c.first + visible) c.first = c.selected - visible + 1;
 		if(_column == 0) m_columns[1] = {};
 		m_marked = {m_columns[1].selected};
-		repaint();
+		marksChanged();
 	}
 
 	std::vector<size_t> LibraryView::markedItems() const
@@ -170,27 +178,33 @@ namespace mdJucePlugin
 		return items;
 	}
 
-	// What IMPORTA will copy, and which sample slots it overwrites.
-	juce::String LibraryView::importHint() const
+	// What IMPORTA will copy and which sample slots it overwrites, from the same
+	// plan the import uses, as if every slot were free.
+	void LibraryView::marksChanged()
 	{
-		if(m_packs.empty()) return {};
-		const auto& pack = m_packs[size_t(m_columns[0].selected)];
-		int kits = 0, patterns = 0;
-		std::set<uint8_t> samples;
-		for(const auto index : markedItems())
+		m_hint.clear();
+		if(!m_packs.empty() && !m_marked.empty())
 		{
-			const auto& item = pack.items[index];
-			(item.kind == md::packlib::ItemKind::Kit ? kits : patterns)++;
-			for(const auto& kit : pack.items)
-				if(kit.kind == md::packlib::ItemKind::Kit
-					&& (&kit == &item || (item.kind == md::packlib::ItemKind::Pattern && kit.slot == item.kitSlot)))
-					samples.insert(kit.sampleSlots.begin(), kit.sampleSlots.end());
+			const auto plan = md::packlib::planImport(m_packs[size_t(m_columns[0].selected)].items, markedItems(),
+				std::vector<bool>(64, true), std::vector<bool>(128, true));
+			m_hint = "IMPORTA: " + juce::String(int(plan.kitsNeeded)) + " KIT, "
+				+ juce::String(int(plan.patternsNeeded)) + " PATTERN";
+			if(plan.skippedPatterns)
+				m_hint << " (" << int(plan.skippedPatterns) << " SENZA KIT)";
+			if(!plan.sampleSlots.empty())
+			{
+				m_hint << "  -  SOSTITUISCE I CAMPIONI";
+				for(size_t i = 0; i < plan.sampleSlots.size();)
+				{
+					size_t j = i;
+					while(j + 1 < plan.sampleSlots.size() && plan.sampleSlots[j + 1] == plan.sampleSlots[j] + 1) ++j;
+					m_hint << " " << int(plan.sampleSlots[i] + 1);
+					if(j > i) m_hint << "-" << int(plan.sampleSlots[j] + 1);
+					i = j + 1;
+				}
+			}
 		}
-		juce::String hint = "SELEZIONATI: " + juce::String(kits) + " KIT, " + juce::String(patterns) + " PATTERN";
-		if(!samples.empty())
-			hint << "  -  IMPORTA SOSTITUISCE I CAMPIONI " << juce::String(*samples.begin() + 1)
-				<< (samples.size() > 1 ? "-" + juce::String(*samples.rbegin() + 1) : juce::String());
-		return hint;
+		repaint();
 	}
 
 	void LibraryView::importMarked()
@@ -257,13 +271,13 @@ namespace mdJucePlugin
 			{
 				m_columns[1].selected = index;
 				if(!m_marked.erase(index)) m_marked.insert(index);
-				repaint();
+				marksChanged();
 			}
 			else if(mods.isShiftDown())
 			{
 				for(int i = std::min(anchor, index); i <= std::max(anchor, index); ++i) m_marked.insert(i);
 				m_columns[1].selected = index;
-				repaint();
+				marksChanged();
 			}
 			else
 				select(1, index);
@@ -298,9 +312,10 @@ namespace mdJucePlugin
 		else if(code == juce::KeyPress::returnKey) play();
 		else if(_key.getModifiers().isCommandDown() && (code == 'A' || code == 'a'))
 		{
+			if(!itemCount()) return true;
 			for(int i = 0; i < itemCount(); ++i) m_marked.insert(i);
 			m_focus = 1;
-			repaint();
+			marksChanged();
 		}
 		else return false;
 		return true;

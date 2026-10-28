@@ -123,19 +123,22 @@ int main(int _argc, char** _argv)
 
 	// Inventory, one request at a time.
 	const auto inventoryStart = seconds(hw);
-	std::vector<bool> freeKits(64), freePatterns(128);
+	std::vector<md::packlib::Item> machine;
 	for(uint8_t k = 0; k < 64; ++k)
 	{
 		const auto items = md::packlib::readSyx(request(hw, 0x53, k)).items;
 		require(items.size() == 1, "kit dump missing");
-		freeKits[k] = items[0].empty;
+		machine.push_back(items[0]);
 	}
 	for(uint8_t p = 0; p < 128; ++p)
 	{
 		const auto items = md::packlib::readSyx(request(hw, 0x68, p)).items;
 		require(items.size() == 1, "pattern dump missing");
-		freePatterns[p] = items[0].empty;
+		machine.push_back(items[0]);
 	}
+	const auto slots = md::packlib::freeSlots(machine);
+	const auto& freeKits = slots.freeKits;
+	const auto& freePatterns = slots.freePatterns;
 	std::printf("inventory: %.2f s, %zu free kits, %zu free patterns\n", seconds(hw) - inventoryStart,
 		size_t(std::count(freeKits.begin(), freeKits.end(), true)),
 		size_t(std::count(freePatterns.begin(), freePatterns.end(), true)));

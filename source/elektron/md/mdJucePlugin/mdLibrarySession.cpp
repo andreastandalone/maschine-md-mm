@@ -64,8 +64,7 @@ namespace mdJucePlugin
 
 	LibrarySession::~LibrarySession()
 	{
-		if(m_phase == Phase::Probe || m_phase == Phase::Settle || m_phase == Phase::Inventory)
-			(void)m_processor.endSysexCapture();
+		endCapture();
 		if(!m_ticket)
 			return;
 		std::vector<uint8_t> retired;
@@ -175,15 +174,14 @@ namespace mdJucePlugin
 			m_processor.restoreLibrarySnapshot();
 			m_changed = false;
 		}
-		if(!m_processor.beginSysexCapture(g_model, false))
+		if(!beginCapture())
 		{
 			m_next = std::move(m_current);
 			m_current.reset();
 			m_status = "ATTENDI";
 			return;
 		}
-		m_freeKits.assign(g_kitCount, false);
-		m_freePatterns.assign(g_patternCount, false);
+		m_machineItems.clear();
 		m_inventoryNext = 0;
 		m_phase = Phase::Inventory;
 		m_probeStarted = now();
@@ -196,25 +194,26 @@ namespace mdJucePlugin
 	void LibrarySession::serviceInventory()
 	{
 		const auto t = now();
-		const auto contents = md::packlib::readSyx(m_processor.takeCapturedSysex());
-		for(const auto& item : contents.items)
+		auto contents = md::packlib::readSyx(m_processor.takeCapturedSysex());
+		for(auto& item : contents.items)
 		{
 			const auto index = item.kind == md::packlib::ItemKind::Kit ? size_t(item.slot) : g_kitCount + item.slot;
 			if(index != m_inventoryNext)
 				continue;
-			(item.kind == md::packlib::ItemKind::Kit ? m_freeKits[item.slot] : m_freePatterns[item.slot]) = item.empty;
+			item.dump.clear();
+			m_machineItems.push_back(std::move(item));
 			++m_inventoryNext;
 			m_probeSent = 0;
 		}
 		if(m_inventoryNext == g_kitCount + g_patternCount)
 		{
-			(void)m_processor.endSysexCapture();
+			endCapture();
 			planCurrentImport();
 			return;
 		}
 		if(t - m_probeStarted > g_probeTimeoutMs * 1.5)
 		{
-			(void)m_processor.endSysexCapture();
+			endCapture();
 			finish("LA MACCHINA NON RISPONDE");
 			return;
 		}
@@ -228,11 +227,12 @@ namespace mdJucePlugin
 	void LibrarySession::planCurrentImport()
 	{
 		auto& r = *m_current;
-		const auto plan = md::packlib::planImport(r.source->items, r.selected, m_freeKits, m_freePatterns);
+		const auto slots = md::packlib::freeSlots(m_machineItems);
+		const auto plan = md::packlib::planImport(r.source->items, r.selected, slots.freeKits, slots.freePatterns);
 		if(!plan.enoughSlots)
 		{
-			const auto freeKits = std::count(m_freeKits.begin(), m_freeKits.end(), true);
-			const auto freePatterns = std::count(m_freePatterns.begin(), m_freePatterns.end(), true);
+			const auto freeKits = std::count(slots.freeKits.begin(), slots.freeKits.end(), true);
+			const auto freePatterns = std::count(slots.freePatterns.begin(), slots.freePatterns.end(), true);
 			finish("SLOT LIBERI INSUFFICIENTI: SERVONO " + juce::String(int(plan.kitsNeeded)) + " KIT E "
 				+ juce::String(int(plan.patternsNeeded)) + " PATTERN, LIBERI " + juce::String(int(freeKits))
 				+ " KIT E " + juce::String(int(freePatterns)) + " PATTERN");
@@ -312,7 +312,9 @@ namespace mdJucePlugin
 			m_changed = true;
 			return true;
 		}
-		m_next = std::move(m_current);
+		// Retry later; an import that already started is not given up for an audition.
+		if(!m_next || m_current->source)
+			m_next = std::move(m_current);
 		m_current.reset();
 		m_status = result == Start::NotReady || result == Start::Initializing || result == Start::Restoring
 			? "ATTENDI: LA MACCHINA SI STA AVVIANDO" : "ATTENDI";
@@ -365,6 +367,7 @@ namespace mdJucePlugin
 		{
 			// The last pattern is stored once the firmware answers again.
 			startProbe(Phase::Settle);
+			m_status = "SALVATAGGIO...";
 			return;
 		}
 		sendToMachine(m_current->load);
@@ -382,9 +385,9 @@ namespace mdJucePlugin
 	void LibrarySession::serviceProbe()
 	{
 		const auto t = now();
-		if(m_processor.isSysexCapturing() && !m_processor.takeCapturedSysex().empty())
+		if(m_ownsCapture && !m_processor.takeCapturedSysex().empty())
 		{
-			(void)m_processor.endSysexCapture();
+			endCapture();
 			if(m_phase == Phase::Settle)
 			{
 				m_processor.commitLibrarySnapshot();
@@ -394,21 +397,41 @@ namespace mdJucePlugin
 				return;
 			}
 			m_phase = Phase::Idle;
-			if(m_next) startNext();
-			else if(startTransfer(m_current->dumps, false)) m_phase = Phase::Dumps;
+			// A new audition replaces an audition, never an import half done.
+			if(m_next && !m_current->source) startNext();
+			else if(startTransfer(m_current->dumps, false))
+			{
+				m_phase = Phase::Dumps;
+				m_status = "INVIO KIT E PATTERN...";
+			}
 			return;
 		}
 		if(t - m_probeStarted > g_probeTimeoutMs)
 		{
-			(void)m_processor.endSysexCapture();
+			endCapture();
 			finish("LA MACCHINA NON RISPONDE");
 			return;
 		}
 		if(t - m_probeSent < g_probeIntervalMs)
 			return;
 		m_probeSent = t;
-		if(m_processor.isSysexCapturing() || m_processor.beginSysexCapture(g_model, false))
+		if(beginCapture())
 			sendToMachine(g_probe);
+	}
+
+	// Only our own capture is read and ended, never a SysEx export in progress.
+	bool LibrarySession::beginCapture()
+	{
+		if(!m_ownsCapture)
+			m_ownsCapture = m_processor.beginSysexCapture(g_model, false);
+		return m_ownsCapture;
+	}
+
+	void LibrarySession::endCapture()
+	{
+		if(m_ownsCapture)
+			(void)m_processor.endSysexCapture();
+		m_ownsCapture = false;
 	}
 
 	void LibrarySession::sendToMachine(const std::vector<uint8_t>& _sysex)

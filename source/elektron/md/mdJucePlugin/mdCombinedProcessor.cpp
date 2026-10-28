@@ -135,9 +135,10 @@ namespace mdJucePlugin
 
 	std::vector<uint8_t> CombinedProcessor::takeCapturedSysex()
 	{
-		std::vector<uint8_t> bytes;
+		// Copy and clear: the reserved capacity stays, so the audio thread never allocates.
 		std::lock_guard lock(m_captureMutex);
-		std::swap(bytes, m_captureBytes);
+		auto bytes = m_captureBytes;
+		m_captureBytes.clear();
 		return bytes;
 	}
 
@@ -188,15 +189,17 @@ namespace mdJucePlugin
 	std::optional<CombinedProcessor::SysexCapture>
 	CombinedProcessor::endSysexCapture()
 	{
-		if(!m_captureEnabled.exchange(false, std::memory_order_acq_rel))
+		if(!m_captureEnabled.load(std::memory_order_acquire))
 			return std::nullopt;
 		const auto model = m_captureModel.load(std::memory_order_acquire);
 		auto& machine = model == md::MachineModel::Machinedrum
 			? m_machinedrum : m_monomachine;
 		using Source = synthLib::MidiEventSource;
 		using Type = synthLib::MidiRoutingMatrix::EventType;
+		// Route back first: a private capture keeps stripping replies until then.
 		machine.getMidiRoutingMatrix().setEnabled(Source::Device,
 			Source::Host, Type::SysEx, m_capturePreviousHostRoute);
+		m_captureEnabled.store(false, std::memory_order_release);
 		std::lock_guard lock(m_captureMutex);
 		return SysexCapture{model, std::move(m_captureBytes),
 			m_captureIncomplete.load(std::memory_order_relaxed)};

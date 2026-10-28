@@ -42,6 +42,15 @@ namespace md::packlib
 	std::vector<uint8_t> retargetDump(std::vector<uint8_t> _dump, uint8_t _slot);
 	std::vector<uint8_t> retargetMdPattern(std::vector<uint8_t> _dump, uint8_t _slot, uint8_t _kitSlot);
 
+	// Free slots from the machine's own kit and pattern dumps. Slots without a
+	// dump are not free, and neither is an empty kit a used pattern plays.
+	struct FreeSlots
+	{
+		std::vector<bool> freeKits = std::vector<bool>(64, false);
+		std::vector<bool> freePatterns = std::vector<bool>(128, false);
+	};
+	FreeSlots freeSlots(const std::vector<Item>& _machine);
+
 	// Where a selection of pack items goes on the machine: kits to free kit
 	// slots, patterns to free pattern slots, each pattern pointing at the new
 	// slot of its kit. Nothing is planned when the free slots do not suffice.

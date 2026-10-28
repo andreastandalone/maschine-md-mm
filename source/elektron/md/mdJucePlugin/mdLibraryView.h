@@ -42,14 +42,14 @@ namespace mdJucePlugin
 		const md::packlib::Item* selectedItem() const;
 		void select(int _column, int _index);
 		std::vector<size_t> markedItems() const;
-		juce::String importHint() const;
+		void marksChanged();
 		void importMarked();
 		void playKit();
 		void playPattern();
 		void play();
 		void paintColumn(juce::Graphics& _g, juce::Rectangle<int> _area, int _row,
 			const juce::StringArray& _rows, const Column& _column, bool _focused,
-			const std::set<int>& _marked) const;
+			const std::set<int>& _marked, bool _marksItems) const;
 
 		CombinedProcessor& m_processor;
 		juce::File m_folder;
@@ -58,5 +58,6 @@ namespace mdJucePlugin
 		int m_focus = 0;
 		std::set<int> m_marked;                  // items picked for IMPORTA
 		juce::String m_shownStatus;
+		juce::String m_hint;
 	};
 }
