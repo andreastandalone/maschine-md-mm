@@ -3,6 +3,7 @@
 #include "mdtypes.h"
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -41,13 +42,21 @@ namespace md::packlib
 
 	std::vector<uint8_t> retargetDump(std::vector<uint8_t> _dump, uint8_t _slot);
 	std::vector<uint8_t> retargetMdPattern(std::vector<uint8_t> _dump, uint8_t _slot, uint8_t _kitSlot);
+	// Either machine: moves a pattern to _slot and points it at _kitSlot.
+	std::vector<uint8_t> retargetPattern(const Item& _pattern, uint8_t _slot, uint8_t _kitSlot);
 
-	// Free slots from the machine's own kit and pattern dumps. Slots without a
-	// dump are not free, and neither is an empty kit a used pattern plays.
+	// Monomachine dumps carry their data 7-bit packed and run-length encoded.
+	std::optional<std::vector<uint8_t>> mmPayload(const std::vector<uint8_t>& _dump);
+	// _dump with its payload replaced by _payload, length and checksum updated.
+	std::vector<uint8_t> withMmPayload(const std::vector<uint8_t>& _dump, const std::vector<uint8_t>& _payload);
+
+	// Free slots from the machine's own kit and pattern dumps, sized for that
+	// machine (MD 64 kits, MM 128). Slots without a dump are not free, and
+	// neither is an empty kit a used pattern plays.
 	struct FreeSlots
 	{
-		std::vector<bool> freeKits = std::vector<bool>(64, false);
-		std::vector<bool> freePatterns = std::vector<bool>(128, false);
+		std::vector<bool> freeKits;
+		std::vector<bool> freePatterns;
 	};
 	FreeSlots freeSlots(const std::vector<Item>& _machine);
 

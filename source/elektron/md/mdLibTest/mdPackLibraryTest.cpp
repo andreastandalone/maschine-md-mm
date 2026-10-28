@@ -96,6 +96,22 @@ namespace
 	void append(Bytes& _to, const Bytes& _from) { _to.insert(_to.end(), _from.begin(), _from.end()); }
 
 	// stdio, not <filesystem>: the deployment target predates macOS 10.15.
+	// A Monomachine dump around a decoded payload, through the library's own encoder.
+	Bytes mmDump(uint8_t _command, uint8_t _slot, const Bytes& _payload)
+	{
+		Bytes d{0xf0, 0x00, 0x20, 0x3c, 0x03, 0x00, _command, uint8_t(_command == 0x52 ? 0x02 : 0x06), 0x01, _slot,
+			0, 0, 0, 0, 0xf7};
+		return md::packlib::withMmPayload(d, _payload);
+	}
+
+	Bytes mmKitPayload(const char* _name)
+	{
+		Bytes p(700, 0);
+		for(size_t i = 0; _name[i] && i < 11; ++i) p[i] = uint8_t(_name[i]);
+		for(size_t i = 20; i < 400; ++i) p[i] = uint8_t(i * 37);   // values above 0x7f and short runs
+		return p;
+	}
+
 	Bytes readFile(const std::string& _path)
 	{
 		Bytes bytes;
@@ -223,12 +239,46 @@ int main(int _argc, char** _argv)
 		const auto short_ = planImport(pack, {2, 1}, oneKit, freePatterns);
 		expect(!short_.enoughSlots && short_.kitsNeeded == 2 && short_.dumps.empty(), "missing slots not reported");
 	}
+	// mmPayload: Monomachine dumps are 7-bit packed and run-length encoded
+	{
+		const auto payload = mmKitPayload("MM TEST");
+		const auto dump = mmDump(0x52, 9, payload);
+		expect(md::parseMidiSysexFile(dump, md::MachineModel::Monomachine) == md::MidiSysexStreamValidation::Valid,
+			"encoded MM dump invalid");
+		expect(mmPayload(dump) == std::optional<Bytes>(payload), "MM payload did not round-trip");
+		const auto c = readSyx(dump);
+		expect(c.items.size() == 1 && c.items[0].model == md::MachineModel::Monomachine
+			&& c.items[0].kind == ItemKind::Kit && c.items[0].slot == 9 && c.items[0].name == "MM TEST"
+			&& !c.items[0].empty, "MM kit not read");
+		auto erased = payload;
+		erased[0] = 0xff;
+		expect(readSyx(mmDump(0x52, 9, erased)).items[0].empty, "erased MM kit not empty");
+	}
+	// mmPattern: kit number at decoded 0x426, trigs in the first 48 decoded bytes
+	{
+		Bytes payload(6520, 0);
+		payload[0x426] = 5;
+		const auto dump = mmDump(0x67, 3, payload);
+		const auto c = readSyx(dump);
+		expect(c.items.size() == 1 && c.items[0].kind == ItemKind::Pattern && c.items[0].kitSlot == 5
+			&& c.items[0].empty, "MM pattern not read");
+		payload[47] = 0x80;
+		const auto used = readSyx(mmDump(0x67, 3, payload)).items[0];
+		expect(!used.empty, "MM pattern with a trig read as empty");
+		const auto moved = retargetPattern(used, 100, 20);
+		const auto back = readSyx(moved).items;
+		expect(back.size() == 1 && back[0].slot == 100 && back[0].kitSlot == 20, "MM pattern not retargeted");
+		auto expected = payload;
+		expected[0x426] = 20;
+		expect(mmPayload(moved) == std::optional<Bytes>(expected), "MM retarget changed other pattern bytes");
+	}
 	// junk and other models
 	{
 		expect(readSyx({0x12, 0x34, 0xf0, 0x01, 0xf7}).items.empty(), "junk produced items");
 		auto mm = kit;
 		mm[4] = 0x03;
-		expect(readSyx(mm).items.empty(), "MM kit with MD layout accepted as MD");
+		for(const auto& item : readSyx(mm).items)
+			expect(item.model == md::MachineModel::Monomachine, "MM dump listed as MD");
 	}
 	// loadCommands
 	{
@@ -252,7 +302,18 @@ int main(int _argc, char** _argv)
 		const auto ch = readSyx(readFile(root + "/MD/MD909/09CH-SLOT1.syx"));
 		expect(ch.samples.size() == 1 && ch.samples[0].slot == 0, "09CH sample slot");
 		// Booster Pack is Monomachine data (product 0x03) with a truncated tail.
-		expect(readSyx(readFile(root + "/MD/Booster-Pack/SysEx/The Room.syx")).items.empty(), "MM pack listed as MD");
+		for(const auto& item : readSyx(readFile(root + "/MD/Booster-Pack/SysEx/The Room.syx")).items)
+			expect(item.model == md::MachineModel::Monomachine, "MM pack listed as MD");
+		const auto lem = readSyx(readFile(root + "/MM/Nicholas-Lem-Collection/SysEx/Nicholas Lem MnM Sound Pack(patterns+kits).syx"));
+		expect(count(lem, ItemKind::Kit) == 16 && count(lem, ItemKind::Pattern) == 16, "Nicholas Lem item counts");
+		for(const auto& item : lem.items)
+		{
+			expect(item.model == md::MachineModel::Monomachine, "Nicholas Lem item not MM");
+			if(item.kind == ItemKind::Kit)
+				expect(!item.name.empty() && !item.empty, "Nicholas Lem kit without name");
+			else
+				expect(item.kitSlot < 16 && !item.empty, "Nicholas Lem pattern kit out of pack");
+		}
 	}
 	std::cout << "mdPackLibraryTest: ok\n";
 	return 0;

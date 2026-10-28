@@ -11,6 +11,10 @@ namespace md::packlib
 		using Bytes = std::vector<uint8_t>;
 
 		constexpr uint8_t g_mdProduct = 0x02;
+		constexpr uint8_t g_mmProduct = 0x03;
+		constexpr size_t g_mmKitName = 11;
+		constexpr size_t g_mmPatternKit = 0x426;
+		constexpr size_t g_mmPatternTrigs = 48;        // six tracks, 64 steps each
 		constexpr uint8_t g_kitDump = 0x52;
 		constexpr uint8_t g_patternDump = 0x67;
 		constexpr uint8_t g_sampleName = 0x73;
@@ -52,9 +56,9 @@ namespace md::packlib
 			return messages;
 		}
 
-		bool validDump(const Bytes& _m)
+		bool validDump(const Bytes& _m, const MachineModel _model = MachineModel::Machinedrum)
 		{
-			return parseMidiSysexFile(_m, MachineModel::Machinedrum) == MidiSysexStreamValidation::Valid;
+			return parseMidiSysexFile(_m, _model) == MidiSysexStreamValidation::Valid;
 		}
 
 		// Elektron 7-bit packing: each group starts with a byte holding the MSBs
@@ -101,8 +105,38 @@ namespace md::packlib
 			return std::string("PATTERN ") + char('A' + _slot / 16) + char('0' + number / 10) + char('0' + number % 10);
 		}
 
+		void addMmDump(FileContents& _contents, Bytes&& _m)
+		{
+			if(!validDump(_m, MachineModel::Monomachine)) return;
+			const auto payload = mmPayload(_m);
+			if(!payload) return;
+			Item item;
+			item.model = MachineModel::Monomachine;
+			item.slot = _m[9];
+			if(_m[6] == g_kitDump && payload->size() >= g_mmKitName)
+			{
+				item.kind = ItemKind::Kit;
+				// The firmware marks an erased kit slot with 0xFF as first name byte.
+				if((*payload)[0] != 0xff)
+					for(size_t i = 0; i < g_mmKitName && (*payload)[i]; ++i) item.name += char((*payload)[i]);
+				while(!item.name.empty() && item.name.back() == ' ') item.name.pop_back();
+				item.empty = item.name.empty();
+			}
+			else if(_m[6] == g_patternDump && payload->size() > g_mmPatternKit)
+			{
+				item.kind = ItemKind::Pattern;
+				item.name = patternName(item.slot);
+				item.kitSlot = (*payload)[g_mmPatternKit];
+				item.empty = std::all_of(payload->begin(), payload->begin() + g_mmPatternTrigs, [](uint8_t _b) { return _b == 0; });
+			}
+			else return;
+			item.dump = std::move(_m);
+			_contents.items.push_back(std::move(item));
+		}
+
 		void addDump(FileContents& _contents, Bytes&& _m)
 		{
+			if(_m[4] == g_mmProduct) return addMmDump(_contents, std::move(_m));
 			if(_m[4] != g_mdProduct || !validDump(_m)) return;
 			Item item;
 			item.slot = _m[9];
@@ -193,9 +227,68 @@ namespace md::packlib
 		return retargetDump(std::move(_dump), _slot);
 	}
 
+	Bytes retargetPattern(const Item& _pattern, const uint8_t _slot, const uint8_t _kitSlot)
+	{
+		if(_pattern.model == MachineModel::Machinedrum)
+			return retargetMdPattern(_pattern.dump, _slot, _kitSlot);
+		auto payload = mmPayload(_pattern.dump);
+		if(!payload || payload->size() <= g_mmPatternKit) return {};
+		(*payload)[g_mmPatternKit] = _kitSlot;
+		return retargetDump(withMmPayload(_pattern.dump, *payload), _slot);
+	}
+
+	std::optional<Bytes> mmPayload(const Bytes& _dump)
+	{
+		if(_dump.size() < 15) return std::nullopt;
+		const auto rle = unpack7(_dump.data() + 10, _dump.size() - 15);
+		Bytes payload;
+		for(size_t i = 0; i < rle.size(); ++i)
+		{
+			if(rle[i] < 0x80) { payload.push_back(rle[i]); continue; }
+			const size_t count = rle[i] & 0x7f;
+			if(!count || ++i >= rle.size()) return std::nullopt;
+			payload.insert(payload.end(), count, rle[i]);
+		}
+		return payload;
+	}
+
+	Bytes withMmPayload(const Bytes& _dump, const Bytes& _payload)
+	{
+		// Runs of three or more, and any byte with its top bit set, become
+		// (0x80 | count, value); everything else stays literal.
+		Bytes rle;
+		for(size_t i = 0; i < _payload.size();)
+		{
+			size_t run = 1;
+			while(i + run < _payload.size() && run < 127 && _payload[i + run] == _payload[i]) ++run;
+			if(run >= 3 || _payload[i] >= 0x80)
+			{
+				rle.push_back(uint8_t(0x80 | run));
+				rle.push_back(_payload[i]);
+			}
+			else
+				rle.insert(rle.end(), run, _payload[i]);
+			i += run;
+		}
+		Bytes out(_dump.begin(), _dump.begin() + 10);
+		for(size_t i = 0; i < rle.size(); i += 7)
+		{
+			const size_t n = std::min<size_t>(7, rle.size() - i);
+			uint8_t msb = 0;
+			for(size_t j = 0; j < n; ++j) msb |= uint8_t((rle[i + j] >> 7) << (6 - j));
+			out.push_back(msb);
+			for(size_t j = 0; j < n; ++j) out.push_back(rle[i + j] & 0x7f);
+		}
+		const auto length = out.size() + 5 - 10;
+		out.insert(out.end(), {0, 0, uint8_t((length >> 7) & 0x7f), uint8_t(length & 0x7f), 0xf7});
+		setChecksum(out);
+		return out;
+	}
+
 	FreeSlots freeSlots(const std::vector<Item>& _machine)
 	{
-		FreeSlots slots;
+		const bool mm = !_machine.empty() && _machine.front().model == MachineModel::Monomachine;
+		FreeSlots slots{std::vector<bool>(mm ? 128 : 64, false), std::vector<bool>(128, false)};
 		for(const auto& item : _machine)
 		{
 			auto& table = item.kind == ItemKind::Kit ? slots.freeKits : slots.freePatterns;
@@ -256,7 +349,7 @@ namespace md::packlib
 		for(size_t p = 0; p < patterns.size(); ++p)
 		{
 			const auto kit = std::find(kits.begin(), kits.end(), &*findKit(patterns[p]->kitSlot)) - kits.begin();
-			const auto dump = retargetMdPattern(patterns[p]->dump, plan.patternSlots[p], plan.kitSlots[size_t(kit)]);
+			const auto dump = retargetPattern(*patterns[p], plan.patternSlots[p], plan.kitSlots[size_t(kit)]);
 			plan.dumps.insert(plan.dumps.end(), dump.begin(), dump.end());
 		}
 		std::sort(plan.sampleSlots.begin(), plan.sampleSlots.end());
