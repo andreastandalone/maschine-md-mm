@@ -324,7 +324,10 @@ namespace mdJucePlugin
 	{
 		restorePreferredSize();
 		fixParentWindowSize();
-		if(m_restoreAttempts == 0)
+		// Only the standalone owns its window. In a plug-in the top level is the
+		// host's embedded wrapper, and centring it on screen offsets it inside
+		// the host window.
+		if(m_restoreAttempts == 0 && juce::JUCEApplicationBase::isStandaloneApp())
 		{
 			if(auto* const topLevel = getTopLevelComponent(); topLevel != this)
 				topLevel->centreWithSize(topLevel->getWidth(), topLevel->getHeight());
