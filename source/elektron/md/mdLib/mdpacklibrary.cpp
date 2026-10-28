@@ -111,7 +111,8 @@ namespace md::packlib
 				item.kind = ItemKind::Kit;
 				item.name = kitName(_m);
 				item.sampleSlots = kitSampleSlots(_m);
-				item.empty = item.name.empty();
+				// The firmware marks an erased kit slot with 0x7F as first name byte.
+				item.empty = item.name.empty() || _m[g_kitName] == 0x7f;
 			}
 			else if(_m[6] == g_patternDump && _m.size() > g_patternKit + 5)
 			{

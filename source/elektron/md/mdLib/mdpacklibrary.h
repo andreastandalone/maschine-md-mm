@@ -21,7 +21,7 @@ namespace md::packlib
 		uint8_t kitSlot = 0;                 // patterns only
 		std::vector<uint8_t> dump;
 		std::vector<uint8_t> sampleSlots;    // MD kits only, sorted unique
-		bool empty = false;                  // kit without a name, pattern without trigs
+		bool empty = false;                  // erased or unnamed kit, pattern without trigs
 	};
 
 	struct Sample

@@ -177,6 +177,9 @@ int main(int _argc, char** _argv)
 	{
 		expect(!readSyx(kit).items[0].empty, "named kit read as empty");
 		expect(readSyx(mdKit(7, "", {})).items[0].empty, "unnamed kit not empty");
+		// The firmware marks an erased kit slot by 0x7F in the first name byte;
+		// the rest of the old name stays behind.
+		expect(readSyx(mdKit(8, "\x7fNPUT A FX", {})).items[0].empty, "erased kit not empty");
 		expect(readSyx(mdPattern(4, 0)).items[0].empty, "pattern without trigs not empty");
 		auto used = mdPattern(4, 0);
 		used[0x0b] = 0x01;
