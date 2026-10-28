@@ -21,6 +21,7 @@ namespace md::packlib
 		uint8_t kitSlot = 0;                 // patterns only
 		std::vector<uint8_t> dump;
 		std::vector<uint8_t> sampleSlots;    // MD kits only, sorted unique
+		bool empty = false;                  // kit without a name, pattern without trigs
 	};
 
 	struct Sample
@@ -40,6 +41,24 @@ namespace md::packlib
 
 	std::vector<uint8_t> retargetDump(std::vector<uint8_t> _dump, uint8_t _slot);
 	std::vector<uint8_t> retargetMdPattern(std::vector<uint8_t> _dump, uint8_t _slot, uint8_t _kitSlot);
+
+	// Where a selection of pack items goes on the machine: kits to free kit
+	// slots, patterns to free pattern slots, each pattern pointing at the new
+	// slot of its kit. Nothing is planned when the free slots do not suffice.
+	struct ImportPlan
+	{
+		std::vector<uint8_t> dumps;          // kits first, then patterns
+		std::vector<uint8_t> kitSlots;       // destinations, in import order
+		std::vector<uint8_t> patternSlots;
+		std::vector<uint8_t> sampleSlots;    // samples the kits need, original slots
+		size_t kitsNeeded = 0;
+		size_t patternsNeeded = 0;
+		size_t skippedPatterns = 0;          // their kit is not in the pack
+		bool enoughSlots = true;
+	};
+
+	ImportPlan planImport(const std::vector<Item>& _pack, const std::vector<size_t>& _selected,
+		const std::vector<bool>& _freeKits, const std::vector<bool>& _freePatterns);
 
 	std::vector<uint8_t> loadKitCommand(MachineModel _model, uint8_t _slot);
 	std::vector<uint8_t> loadPatternCommand(MachineModel _model, uint8_t _slot);

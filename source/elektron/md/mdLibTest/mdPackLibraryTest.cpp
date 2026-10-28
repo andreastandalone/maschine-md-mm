@@ -173,6 +173,40 @@ int main(int _argc, char** _argv)
 		const auto c = readSyx(bytes);
 		expect(c.samples.size() == 1 && c.samples[0].bytes == sample, "trailing sample name kept in sample");
 	}
+	// emptySlots: a kit without a name and a pattern without trigs are free
+	{
+		expect(!readSyx(kit).items[0].empty, "named kit read as empty");
+		expect(readSyx(mdKit(7, "", {})).items[0].empty, "unnamed kit not empty");
+		expect(readSyx(mdPattern(4, 0)).items[0].empty, "pattern without trigs not empty");
+		auto used = mdPattern(4, 0);
+		used[0x0b] = 0x01;
+		sealDump(used);
+		expect(!readSyx(used).items[0].empty, "pattern with a trig read as empty");
+	}
+	// planImport: kits go to free kit slots, patterns to free pattern slots and
+	// follow their kit; a pattern whose kit is not in the pack is skipped
+	{
+		std::vector<Item> pack;
+		for(const auto& d : {mdKit(3, "A", {0x80, 0x81}), mdKit(4, "B", {}), mdPattern(0, 3), mdPattern(1, 3), mdPattern(2, 9)})
+			pack.push_back(readSyx(d).items[0]);
+		std::vector<bool> freeKits(64, false), freePatterns(128, false);
+		freeKits[10] = freeKits[12] = true;
+		freePatterns[20] = freePatterns[21] = freePatterns[22] = true;
+		const auto plan = planImport(pack, {2, 3, 1, 4}, freeKits, freePatterns);
+		expect(plan.enoughSlots, "free slots judged insufficient");
+		expect(plan.kitSlots == std::vector<uint8_t>{10, 12}, "kit destinations wrong");
+		expect(plan.patternSlots == std::vector<uint8_t>{20, 21}, "pattern destinations wrong");
+		expect(plan.skippedPatterns == 1, "pattern without its kit not skipped");
+		expect(plan.sampleSlots == std::vector<uint8_t>{0, 1}, "kit samples not collected");
+		const auto sent = readSyx(plan.dumps);
+		expect(sent.items.size() == 4 && sent.items[0].slot == 10 && sent.items[1].slot == 12, "kit dumps not retargeted");
+		expect(sent.items[2].slot == 20 && sent.items[2].kitSlot == 10 && sent.items[3].kitSlot == 10, "patterns do not follow their kit");
+
+		std::vector<bool> oneKit(64, false);
+		oneKit[10] = true;
+		const auto short_ = planImport(pack, {2, 1}, oneKit, freePatterns);
+		expect(!short_.enoughSlots && short_.kitsNeeded == 2 && short_.dumps.empty(), "missing slots not reported");
+	}
 	// junk and other models
 	{
 		expect(readSyx({0x12, 0x34, 0xf0, 0x01, 0xf7}).items.empty(), "junk produced items");

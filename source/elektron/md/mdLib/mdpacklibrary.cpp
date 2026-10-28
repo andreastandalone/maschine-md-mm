@@ -19,6 +19,8 @@ namespace md::packlib
 		constexpr size_t g_kitMachines = 0x1aa;
 		constexpr size_t g_kitMachinesSize = 74;
 		constexpr size_t g_patternKit = 0xb5;
+		constexpr size_t g_patternTrigs = 0x0a;
+		constexpr size_t g_patternTrigsSize = 74;
 
 		bool isElektron(const Bytes& _m)
 		{
@@ -109,12 +111,15 @@ namespace md::packlib
 				item.kind = ItemKind::Kit;
 				item.name = kitName(_m);
 				item.sampleSlots = kitSampleSlots(_m);
+				item.empty = item.name.empty();
 			}
 			else if(_m[6] == g_patternDump && _m.size() > g_patternKit + 5)
 			{
 				item.kind = ItemKind::Pattern;
 				item.name = patternName(item.slot);
 				item.kitSlot = _m[g_patternKit];
+				const auto trigs = unpack7(_m.data() + g_patternTrigs, g_patternTrigsSize);
+				item.empty = std::all_of(trigs.begin(), trigs.end(), [](uint8_t _b) { return _b == 0; });
 			}
 			else return;
 			item.dump = std::move(_m);
@@ -185,6 +190,63 @@ namespace md::packlib
 	{
 		_dump[g_patternKit] = _kitSlot;
 		return retargetDump(std::move(_dump), _slot);
+	}
+
+	ImportPlan planImport(const std::vector<Item>& _pack, const std::vector<size_t>& _selected,
+		const std::vector<bool>& _freeKits, const std::vector<bool>& _freePatterns)
+	{
+		const auto findKit = [&](uint8_t _slot)
+		{
+			return std::find_if(_pack.begin(), _pack.end(), [&](const Item& _i)
+			{
+				return _i.kind == ItemKind::Kit && _i.slot == _slot;
+			});
+		};
+		std::vector<const Item*> kits, patterns;
+		ImportPlan plan;
+		for(const auto index : _selected)
+		{
+			const auto& item = _pack.at(index);
+			const auto kit = item.kind == ItemKind::Kit ? _pack.begin() + ptrdiff_t(index) : findKit(item.kitSlot);
+			if(kit == _pack.end()) { ++plan.skippedPatterns; continue; }
+			if(std::find(kits.begin(), kits.end(), &*kit) == kits.end()) kits.push_back(&*kit);
+			if(item.kind == ItemKind::Pattern) patterns.push_back(&item);
+		}
+		plan.kitsNeeded = kits.size();
+		plan.patternsNeeded = patterns.size();
+
+		const auto take = [](const std::vector<bool>& _free, size_t _count)
+		{
+			std::vector<uint8_t> slots;
+			for(size_t s = 0; s < _free.size() && slots.size() < _count; ++s)
+				if(_free[s]) slots.push_back(uint8_t(s));
+			return slots;
+		};
+		plan.kitSlots = take(_freeKits, kits.size());
+		plan.patternSlots = take(_freePatterns, patterns.size());
+		plan.enoughSlots = plan.kitSlots.size() == kits.size() && plan.patternSlots.size() == patterns.size();
+		if(!plan.enoughSlots)
+		{
+			plan.kitSlots.clear();
+			plan.patternSlots.clear();
+			return plan;
+		}
+
+		for(size_t k = 0; k < kits.size(); ++k)
+		{
+			const auto dump = retargetDump(kits[k]->dump, plan.kitSlots[k]);
+			plan.dumps.insert(plan.dumps.end(), dump.begin(), dump.end());
+			plan.sampleSlots.insert(plan.sampleSlots.end(), kits[k]->sampleSlots.begin(), kits[k]->sampleSlots.end());
+		}
+		for(size_t p = 0; p < patterns.size(); ++p)
+		{
+			const auto kit = std::find(kits.begin(), kits.end(), &*findKit(patterns[p]->kitSlot)) - kits.begin();
+			const auto dump = retargetMdPattern(patterns[p]->dump, plan.patternSlots[p], plan.kitSlots[size_t(kit)]);
+			plan.dumps.insert(plan.dumps.end(), dump.begin(), dump.end());
+		}
+		std::sort(plan.sampleSlots.begin(), plan.sampleSlots.end());
+		plan.sampleSlots.erase(std::unique(plan.sampleSlots.begin(), plan.sampleSlots.end()), plan.sampleSlots.end());
+		return plan;
 	}
 
 	Bytes loadKitCommand(MachineModel _model, uint8_t _slot) { return command(_model, 0x58, _slot); }
