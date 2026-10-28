@@ -17,10 +17,19 @@ namespace mdJucePlugin
 		constexpr uint32_t g_stateMagic = 0x4d444d4d;
 		constexpr int g_stateVersion = 1;
 
+		// Each machine renders the hardware's six outputs: A/B, C/D and E/F.
+		constexpr int g_machineChannels = 6;
+		constexpr int g_machinePairs = g_machineChannels / 2;
+
 		void prepareChild(juce::AudioProcessor& _processor,
 			const double _sampleRate, const int _blockSize)
 		{
-			_processor.setPlayConfigDetails(2, 2, _sampleRate, _blockSize);
+			juce::AudioProcessor::BusesLayout layout;
+			layout.inputBuses.add(juce::AudioChannelSet::stereo());
+			for(int bus = 0; bus < g_machinePairs; ++bus)
+				layout.outputBuses.add(juce::AudioChannelSet::stereo());
+			_processor.setBusesLayout(layout);
+			_processor.setRateAndBufferSizeDetails(_sampleRate, _blockSize);
 			_processor.prepareToPlay(_sampleRate, _blockSize);
 		}
 	}
@@ -28,9 +37,14 @@ namespace mdJucePlugin
 	CombinedProcessor::CombinedProcessor()
 		: AudioProcessor(BusesProperties()
 			.withInput("Input A/B", juce::AudioChannelSet::stereo(), true)
-			.withOutput("Main A/B", juce::AudioChannelSet::stereo(), true)
-			.withOutput("MD A/B", juce::AudioChannelSet::stereo(), false)
-			.withOutput("MM A/B", juce::AudioChannelSet::stereo(), false))
+			// After the mix, each machine's hardware outputs in panel order.
+			.withOutput("Mix", juce::AudioChannelSet::stereo(), true)
+			.withOutput("Machinedrum Main", juce::AudioChannelSet::stereo(), false)
+			.withOutput("Machinedrum Out C-D", juce::AudioChannelSet::stereo(), false)
+			.withOutput("Machinedrum Out E-F", juce::AudioChannelSet::stereo(), false)
+			.withOutput("Monomachine Main", juce::AudioChannelSet::stereo(), false)
+			.withOutput("Monomachine Out C-D", juce::AudioChannelSet::stereo(), false)
+			.withOutput("Monomachine Out E-F", juce::AudioChannelSet::stereo(), false))
 		, m_machinedrum(md::MachineModel::Machinedrum, false)
 		, m_monomachine(md::MachineModel::Monomachine, false)
 		, m_maschine(m_machinedrum, m_monomachine)
@@ -271,8 +285,8 @@ namespace mdJucePlugin
 	{
 		stopFastBootWorkers();
 		m_maximumBlockSize = std::max(1, _maximumBlockSize);
-		m_mdAudio.setSize(2, m_maximumBlockSize, false, true);
-		m_mmAudio.setSize(2, m_maximumBlockSize, false, true);
+		m_mdAudio.setSize(g_machineChannels, m_maximumBlockSize, false, true);
+		m_mmAudio.setSize(g_machineChannels, m_maximumBlockSize, false, true);
 		m_mdMidi.ensureSize(4096);
 		m_mmMidi.ensureSize(4096);
 		m_midiRouter.reset();
@@ -311,8 +325,10 @@ namespace mdJucePlugin
 			return;
 		}
 
-		m_mdAudio.setSize(2, samples, false, false, true);
-		m_mmAudio.setSize(2, samples, false, false, true);
+		m_mdAudio.setSize(g_machineChannels, samples, false, false, true);
+		m_mmAudio.setSize(g_machineChannels, samples, false, false, true);
+		m_mdAudio.clear();
+		m_mmAudio.clear();
 		for(int channel = 0; channel < 2; ++channel)
 		{
 			m_mdAudio.copyFrom(channel, 0, _audio, channel, 0, samples);
@@ -383,16 +399,21 @@ namespace mdJucePlugin
 		captureSysex(m_mdMidi, md::MachineModel::Machinedrum);
 		captureSysex(m_mmMidi, md::MachineModel::Monomachine);
 
-		// Main always carries the mix, halved to keep headroom, whatever buses
-		// the host activates. The MD and MM pairs carry each machine at full level.
-		auto mdOutput = getBusBuffer(_audio, false, 1);
-		auto mmOutput = getBusBuffer(_audio, false, 2);
+		// The mix always carries both A/B pairs, halved to keep headroom, whatever
+		// buses the host activates. The other buses carry one machine output
+		// pair each at full level.
+		for(int pair = 0; pair < 2 * g_machinePairs; ++pair)
+		{
+			auto output = getBusBuffer(_audio, false, pair + 1);
+			if(output.getNumChannels() < 2)
+				continue;
+			const auto& machine = pair < g_machinePairs ? m_mdAudio : m_mmAudio;
+			const auto firstChannel = (pair % g_machinePairs) * 2;
+			for(int channel = 0; channel < 2; ++channel)
+				output.copyFrom(channel, 0, machine, firstChannel + channel, 0, samples);
+		}
 		for(int channel = 0; channel < 2; ++channel)
 		{
-			if(mdOutput.getNumChannels() >= 2)
-				mdOutput.copyFrom(channel, 0, m_mdAudio, channel, 0, samples);
-			if(mmOutput.getNumChannels() >= 2)
-				mmOutput.copyFrom(channel, 0, m_mmAudio, channel, 0, samples);
 			_audio.copyFrom(channel, 0, m_mdAudio, channel, 0, samples);
 			_audio.applyGain(channel, 0, samples, 0.5f);
 			_audio.addFrom(channel, 0, m_mmAudio, channel, 0, samples, 0.5f);
