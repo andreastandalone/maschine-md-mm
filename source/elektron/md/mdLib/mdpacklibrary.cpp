@@ -1,0 +1,185 @@
+#include "mdpacklibrary.h"
+
+#include "mdsysexfile.h"
+
+#include <algorithm>
+
+namespace md::packlib
+{
+	namespace
+	{
+		using Bytes = std::vector<uint8_t>;
+
+		constexpr uint8_t g_mdProduct = 0x02;
+		constexpr uint8_t g_kitDump = 0x52;
+		constexpr uint8_t g_patternDump = 0x67;
+		constexpr uint8_t g_sampleName = 0x73;
+		constexpr size_t g_kitName = 0x0a;
+		constexpr size_t g_kitNameSize = 16;
+		constexpr size_t g_kitMachines = 0x1aa;
+		constexpr size_t g_kitMachinesSize = 74;
+		constexpr size_t g_patternKit = 0xb5;
+
+		bool isElektron(const Bytes& _m)
+		{
+			return _m.size() >= 8 && _m[1] == 0x00 && _m[2] == 0x20 && _m[3] == 0x3c;
+		}
+
+		bool isSdsHeader(const Bytes& _m) { return _m.size() == 21 && _m[1] == 0x7e && _m[3] == 0x01; }
+		bool isSdsPacket(const Bytes& _m) { return _m.size() >= 5 && _m[1] == 0x7e && _m[3] == 0x02; }
+		bool isSampleName(const Bytes& _m) { return isElektron(_m) && _m[4] == g_mdProduct && _m[6] == g_sampleName; }
+
+		// Complete F0..F7 messages with 7-bit bodies; a message cut short by the
+		// next F0 or the end of the file is dropped.
+		std::vector<Bytes> splitMessages(const Bytes& _bytes)
+		{
+			std::vector<Bytes> messages;
+			size_t i = 0;
+			while(i < _bytes.size())
+			{
+				if(_bytes[i] != 0xf0) { ++i; continue; }
+				size_t end = i + 1;
+				while(end < _bytes.size() && _bytes[end] < 0x80) ++end;
+				if(end < _bytes.size() && _bytes[end] == 0xf7)
+				{
+					messages.emplace_back(_bytes.begin() + ptrdiff_t(i), _bytes.begin() + ptrdiff_t(end) + 1);
+					++end;
+				}
+				i = end;
+			}
+			return messages;
+		}
+
+		bool validDump(const Bytes& _m)
+		{
+			return parseMidiSysexFile(_m, MachineModel::Machinedrum) == MidiSysexStreamValidation::Valid;
+		}
+
+		// Elektron 7-bit packing: each group starts with a byte holding the MSBs
+		// of the following seven bytes, the first one at bit 6.
+		Bytes unpack7(const uint8_t* _data, size_t _size)
+		{
+			Bytes out;
+			for(size_t i = 0; i < _size; i += 8)
+			{
+				const uint8_t msb = _data[i];
+				for(size_t j = 1; j < 8 && i + j < _size; ++j)
+					out.push_back(uint8_t(_data[i + j] | (((msb >> (7 - j)) & 1) << 7)));
+			}
+			return out;
+		}
+
+		// ROM machines 0x80+n: n 0..31 play sample slot n, n 48..63 slot n-16.
+		std::vector<uint8_t> kitSampleSlots(const Bytes& _kit)
+		{
+			const auto raw = unpack7(_kit.data() + g_kitMachines, g_kitMachinesSize);
+			std::vector<uint8_t> slots;
+			for(size_t t = 0; t + 4 <= raw.size() && t < 64; t += 4)
+			{
+				const uint32_t machine = uint32_t(raw[t]) << 24 | uint32_t(raw[t + 1]) << 16 | uint32_t(raw[t + 2]) << 8 | raw[t + 3];
+				if(machine >= 0x80 && machine < 0xa0) slots.push_back(uint8_t(machine - 0x80));
+				else if(machine >= 0xb0 && machine < 0xc0) slots.push_back(uint8_t(machine - 0x90));
+			}
+			std::sort(slots.begin(), slots.end());
+			slots.erase(std::unique(slots.begin(), slots.end()), slots.end());
+			return slots;
+		}
+
+		std::string kitName(const Bytes& _kit)
+		{
+			std::string name;
+			for(size_t i = 0; i < g_kitNameSize && _kit[g_kitName + i]; ++i) name += char(_kit[g_kitName + i]);
+			while(!name.empty() && name.back() == ' ') name.pop_back();
+			return name;
+		}
+
+		std::string patternName(uint8_t _slot)
+		{
+			const auto number = _slot % 16 + 1;
+			return std::string("PATTERN ") + char('A' + _slot / 16) + char('0' + number / 10) + char('0' + number % 10);
+		}
+
+		void addDump(FileContents& _contents, Bytes&& _m)
+		{
+			if(_m[4] != g_mdProduct || !validDump(_m)) return;
+			Item item;
+			item.slot = _m[9];
+			if(_m[6] == g_kitDump && _m.size() > g_kitMachines + g_kitMachinesSize + 5)
+			{
+				item.kind = ItemKind::Kit;
+				item.name = kitName(_m);
+				item.sampleSlots = kitSampleSlots(_m);
+			}
+			else if(_m[6] == g_patternDump && _m.size() > g_patternKit + 5)
+			{
+				item.kind = ItemKind::Pattern;
+				item.name = patternName(item.slot);
+				item.kitSlot = _m[g_patternKit];
+			}
+			else return;
+			item.dump = std::move(_m);
+			_contents.items.push_back(std::move(item));
+		}
+
+		void addSample(FileContents& _contents, Bytes&& _sample)
+		{
+			if(_sample.empty() || !validDump(_sample)) return;
+			_contents.samples.push_back({uint8_t(_sample[4] | _sample[5] << 7), std::move(_sample)});
+		}
+
+		void setChecksum(Bytes& _dump)
+		{
+			const auto size = _dump.size();
+			uint32_t sum = 0;
+			for(size_t i = 9; i < size - 5; ++i) sum += _dump[i];
+			_dump[size - 5] = uint8_t((sum >> 7) & 0x7f);
+			_dump[size - 4] = uint8_t(sum & 0x7f);
+		}
+
+		Bytes command(MachineModel _model, uint8_t _command, uint8_t _slot)
+		{
+			const uint8_t product = _model == MachineModel::Monomachine ? 0x03 : g_mdProduct;
+			return {0xf0, 0x00, 0x20, 0x3c, product, 0x00, _command, uint8_t(_slot & 0x7f), 0xf7};
+		}
+	}
+
+	FileContents readSyx(const Bytes& _bytes)
+	{
+		FileContents contents;
+		Bytes sample;
+		for(auto& m : splitMessages(_bytes))
+		{
+			if(isSdsHeader(m))
+			{
+				addSample(contents, std::move(sample));
+				sample = std::move(m);
+			}
+			else if(!sample.empty() && (isSdsPacket(m) || isSampleName(m)))
+				sample.insert(sample.end(), m.begin(), m.end());
+			else
+			{
+				addSample(contents, std::move(sample));
+				sample.clear();
+				if(isElektron(m) && m.size() > 15) addDump(contents, std::move(m));
+			}
+		}
+		addSample(contents, std::move(sample));
+		return contents;
+	}
+
+	Bytes retargetDump(Bytes _dump, uint8_t _slot)
+	{
+		_dump[9] = _slot;
+		setChecksum(_dump);
+		return _dump;
+	}
+
+	Bytes retargetMdPattern(Bytes _dump, uint8_t _slot, uint8_t _kitSlot)
+	{
+		_dump[g_patternKit] = _kitSlot;
+		return retargetDump(std::move(_dump), _slot);
+	}
+
+	Bytes loadKitCommand(MachineModel _model, uint8_t _slot) { return command(_model, 0x58, _slot); }
+	Bytes loadPatternCommand(MachineModel _model, uint8_t _slot) { return command(_model, 0x57, _slot); }
+}
