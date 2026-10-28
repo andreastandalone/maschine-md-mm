@@ -58,6 +58,14 @@ namespace mdJucePlugin
 		void setStateInformation(const void* _data, int _size) override;
 
 	private:
+		// Host position read once per block on the audio thread. The children
+		// read this copy, so MM's worker thread never calls into the host.
+		struct BlockPlayHead final : juce::AudioPlayHead
+		{
+			juce::Optional<PositionInfo> getPosition() const override { return position; }
+			juce::Optional<PositionInfo> position;
+		};
+
 		void runMonomachineWorker();
 		void captureSysex(const juce::MidiBuffer& _midi, md::MachineModel _model);
 		void runFastBoot(AudioPluginAudioProcessor& _processor,
@@ -67,6 +75,7 @@ namespace mdJucePlugin
 		AudioPluginAudioProcessor m_machinedrum;
 		AudioPluginAudioProcessor m_monomachine;
 		maschine::Controller m_maschine;
+		BlockPlayHead m_blockPlayHead;
 		juce::AudioBuffer<float> m_mdAudio;
 		juce::AudioBuffer<float> m_mmAudio;
 		juce::MidiBuffer m_mdMidi;

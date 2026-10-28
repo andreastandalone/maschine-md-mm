@@ -33,6 +33,10 @@ namespace mdJucePlugin
 		, m_monomachine(md::MachineModel::Monomachine, false)
 		, m_maschine(m_machinedrum, m_monomachine)
 	{
+		// Each child turns host tempo and transport into MIDI clock for its
+		// machine; the firmware's global sync settings decide whether to follow.
+		m_machinedrum.setPlayHead(&m_blockPlayHead);
+		m_monomachine.setPlayHead(&m_blockPlayHead);
 		m_mmWorker = std::thread([this] { runMonomachineWorker(); });
 	}
 
@@ -308,6 +312,9 @@ namespace mdJucePlugin
 		}
 		m_mdMidi.clear();
 		m_mmMidi.clear();
+		const auto* const hostPlayHead = getPlayHead();
+		m_blockPlayHead.position = hostPlayHead ? hostPlayHead->getPosition()
+			: juce::Optional<juce::AudioPlayHead::PositionInfo>();
 		const auto focused = m_maschine.focusedModel();
 		const auto selectedMmTrack = m_maschine.selectedMonomachineTrack();
 		const auto mmNoteChannel = m_monomachine.getMonomachineNoteChannel(selectedMmTrack);
