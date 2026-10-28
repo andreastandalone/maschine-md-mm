@@ -23,13 +23,23 @@ namespace mdJucePlugin
 	LibraryView::LibraryView(CombinedProcessor& _processor)
 		: m_processor(_processor)
 		, m_folder(library::libraryFolder(juce::File(_processor.machinedrum().getDataFolder())))
-		, m_packs(library::scan(m_folder, md::MachineModel::Machinedrum))
 	{
 		setWantsKeyboardFocus(true);
-		if(itemCount()) m_marked = {0};
-		marksChanged();
+		showMachine(md::MachineModel::Machinedrum);
 		// Reading the machine's free slots waits on one reply per tick.
 		startTimer(10);
+	}
+
+	void LibraryView::showMachine(const md::MachineModel _model)
+	{
+		m_model = _model;
+		m_packs = library::scan(m_folder, _model);
+		m_columns[0] = {};
+		m_columns[1] = {};
+		m_focus = 0;
+		m_marked.clear();
+		if(itemCount()) m_marked = {0};
+		marksChanged();
 	}
 
 	LibraryView::Layout LibraryView::layout() const
@@ -108,15 +118,17 @@ namespace mdJucePlugin
 		const auto l = layout();
 		_g.setFont(font(l.row));
 
-		// Tabs: MD active, MM disabled until the Monomachine library exists.
-		const auto tabWidth = l.tabs.getWidth() / 4;
-		const auto mdTab = l.tabs.withWidth(tabWidth).withTrimmedBottom(l.row / 3);
-		_g.setColour(g_text);
-		_g.fillRect(mdTab);
-		_g.setColour(g_background);
-		_g.drawText("MACHINEDRUM", mdTab, juce::Justification::centred);
-		_g.setColour(g_dim);
-		_g.drawText("MM: COMING SOON", mdTab.translated(tabWidth + l.row / 2, 0), juce::Justification::centred);
+		for(const auto model : {md::MachineModel::Machinedrum, md::MachineModel::Monomachine})
+		{
+			const auto tab = tabBounds(l, model);
+			const bool active = model == m_model;
+			_g.setColour(active ? g_text : g_dim);
+			if(active) _g.fillRect(tab);
+			else _g.drawRect(tab);
+			_g.setColour(active ? g_background : g_text);
+			_g.drawText(model == md::MachineModel::Machinedrum ? "MACHINEDRUM" : "MONOMACHINE", tab,
+				juce::Justification::centred);
+		}
 		_g.setColour(g_divider);
 		_g.fillRect(l.tabs.getX(), l.tabs.getBottom() - 2, l.tabs.getWidth(), 1);
 
@@ -139,7 +151,7 @@ namespace mdJucePlugin
 
 		_g.setColour(g_dim);
 		_g.drawText(m_hint, l.hint, juce::Justification::centredLeft, true);
-		const auto* session = m_processor.librarySession();
+		const auto* session = m_processor.librarySession(m_model);
 		_g.setColour(g_text);
 		_g.drawText(session ? session->status() : juce::String(), l.status, juce::Justification::centredLeft, true);
 
@@ -209,14 +221,14 @@ namespace mdJucePlugin
 
 	void LibraryView::importMarked()
 	{
-		if(auto* session = m_processor.librarySession(); session && !m_packs.empty())
+		if(auto* session = m_processor.librarySession(m_model); session && !m_packs.empty())
 			session->importItems(m_packs[size_t(m_columns[0].selected)], markedItems());
 	}
 
 	void LibraryView::playKit()
 	{
 		const auto* item = selectedItem();
-		auto* session = m_processor.librarySession();
+		auto* session = m_processor.librarySession(m_model);
 		if(!item || !session) return;
 		const auto& pack = m_packs[size_t(m_columns[0].selected)];
 		if(item->kind == md::packlib::ItemKind::Kit)
@@ -232,7 +244,7 @@ namespace mdJucePlugin
 	void LibraryView::playPattern()
 	{
 		const auto* item = selectedItem();
-		auto* session = m_processor.librarySession();
+		auto* session = m_processor.librarySession(m_model);
 		if(item && session && item->kind == md::packlib::ItemKind::Pattern)
 			session->playPattern(m_packs[size_t(m_columns[0].selected)], size_t(m_columns[1].selected));
 	}
@@ -244,11 +256,21 @@ namespace mdJucePlugin
 		else playKit();
 	}
 
+	juce::Rectangle<int> LibraryView::tabBounds(const Layout& _layout, const md::MachineModel _model) const
+	{
+		const auto width = _layout.tabs.getWidth() / 4;
+		const auto first = _layout.tabs.withWidth(width).withTrimmedBottom(_layout.row / 3);
+		return _model == md::MachineModel::Machinedrum ? first : first.translated(width + _layout.row / 2, 0);
+	}
+
 	void LibraryView::mouseDown(const juce::MouseEvent& _event)
 	{
 		grabKeyboardFocus();
 		const auto l = layout();
 		const auto p = _event.getPosition();
+		for(const auto model : {md::MachineModel::Machinedrum, md::MachineModel::Monomachine})
+			if(model != m_model && tabBounds(l, model).contains(p))
+				return showMachine(model);
 		if(l.playKit.contains(p)) return playKit();
 		if(l.playPattern.contains(p)) return playPattern();
 		if(l.import.contains(p)) return importMarked();
@@ -310,6 +332,8 @@ namespace mdJucePlugin
 		else if(code == juce::KeyPress::leftKey) { m_focus = 0; repaint(); }
 		else if(code == juce::KeyPress::rightKey) { if(itemCount()) m_focus = 1; repaint(); }
 		else if(code == juce::KeyPress::returnKey) play();
+		else if(code == juce::KeyPress::tabKey)
+			showMachine(m_model == md::MachineModel::Machinedrum ? md::MachineModel::Monomachine : md::MachineModel::Machinedrum);
 		else if(_key.getModifiers().isCommandDown() && (code == 'A' || code == 'a'))
 		{
 			if(!itemCount()) return true;
@@ -323,10 +347,12 @@ namespace mdJucePlugin
 
 	void LibraryView::timerCallback()
 	{
-		auto* session = m_processor.librarySession();
-		if(!session) return;
-		session->service();
-		if(session->status() != m_shownStatus)
+		// Both machines keep working while the other tab is shown.
+		for(const auto model : {md::MachineModel::Machinedrum, md::MachineModel::Monomachine})
+			if(auto* session = m_processor.librarySession(model))
+				session->service();
+		const auto* session = m_processor.librarySession(m_model);
+		if(session && session->status() != m_shownStatus)
 		{
 			m_shownStatus = session->status();
 			repaint();

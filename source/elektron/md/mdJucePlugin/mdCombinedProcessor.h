@@ -6,6 +6,7 @@
 
 #include <juce_audio_processors/juce_audio_processors.h>
 
+#include <array>
 #include <atomic>
 #include <memory>
 #include <mutex>
@@ -45,15 +46,20 @@ namespace mdJucePlugin
 		// Captured bytes so far, removed from the capture, which keeps running.
 		std::vector<uint8_t> takeCapturedSysex();
 
-		// While the library is open the Machinedrum plays auditioned data; the
+		AudioPluginAudioProcessor& machine(md::MachineModel _model)
+		{
+			return _model == md::MachineModel::Monomachine ? m_monomachine : m_machinedrum;
+		}
+
+		// While the library is open both machines play auditioned data; the
 		// state saved by the host stays the one from before it opened.
-		void openLibrarySession();
-		void closeLibrarySession();
-		// Puts the machine back as it was when the library opened.
-		void restoreLibrarySnapshot();
+		void openLibrary();
+		void closeLibrary();
+		// Puts a machine back as it was when the library opened.
+		void restoreLibrarySnapshot(md::MachineModel _model);
 		// Keeps what the library imported: it becomes the state closing returns to.
-		void commitLibrarySnapshot();
-		LibrarySession* librarySession() { return m_librarySession.get(); }
+		void commitLibrarySnapshot(md::MachineModel _model);
+		LibrarySession* librarySession(md::MachineModel _model) { return m_librarySessions[index(_model)].get(); }
 
 		void prepareToPlay(double _sampleRate, int _maximumBlockSize) override;
 		void releaseResources() override;
@@ -139,9 +145,12 @@ namespace mdJucePlugin
 		std::thread m_mdFastBootWorker;
 		std::thread m_mmFastBootWorker;
 		int m_maximumBlockSize = 0;
-		std::unique_ptr<LibrarySession> m_librarySession;
+		static size_t index(md::MachineModel _model) { return _model == md::MachineModel::Monomachine ? 1 : 0; }
+		juce::MemoryBlock librarySnapshot(md::MachineModel _model);
+
+		std::array<std::unique_ptr<LibrarySession>, 2> m_librarySessions;   // MD, MM
 		std::mutex m_librarySnapshotMutex;
-		juce::MemoryBlock m_librarySnapshot;
+		std::array<juce::MemoryBlock, 2> m_librarySnapshots;
 
 		JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(CombinedProcessor)
 	};

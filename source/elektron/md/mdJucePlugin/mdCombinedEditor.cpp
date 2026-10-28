@@ -324,14 +324,14 @@ namespace mdJucePlugin
 		const bool open = !m_libraryView;
 		if(open)
 		{
-			m_processor.openLibrarySession();
+			m_processor.openLibrary();
 			m_libraryView = std::make_unique<LibraryView>(m_processor);
 			addAndMakeVisible(*m_libraryView);
 		}
 		else
 		{
 			m_libraryView.reset();
-			m_processor.closeLibrarySession();
+			m_processor.closeLibrary();
 		}
 		for(auto* editor : {m_mdEditor.get(), m_mmEditor.get()})
 			if(editor) editor->setVisible(!open);

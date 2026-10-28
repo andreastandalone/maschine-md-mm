@@ -96,7 +96,8 @@ namespace mdJucePlugin
 
 	CombinedProcessor::~CombinedProcessor()
 	{
-		m_librarySession.reset();
+		for(auto& session : m_librarySessions)
+			session.reset();
 		if(isSysexCapturing())
 			(void)endSysexCapture();
 		stopFastBootWorkers();
@@ -142,48 +143,57 @@ namespace mdJucePlugin
 		return bytes;
 	}
 
-	void CombinedProcessor::openLibrarySession()
+	void CombinedProcessor::openLibrary()
 	{
-		if(m_librarySession)
-			return;
-		juce::MemoryBlock snapshot;
-		static_cast<juce::AudioProcessor&>(m_machinedrum).getStateInformation(snapshot);
+		for(const auto model : {md::MachineModel::Machinedrum, md::MachineModel::Monomachine})
 		{
-			std::lock_guard lock(m_librarySnapshotMutex);
-			m_librarySnapshot = std::move(snapshot);
+			if(m_librarySessions[index(model)])
+				continue;
+			juce::MemoryBlock snapshot;
+			static_cast<juce::AudioProcessor&>(machine(model)).getStateInformation(snapshot);
+			{
+				std::lock_guard lock(m_librarySnapshotMutex);
+				m_librarySnapshots[index(model)] = std::move(snapshot);
+			}
+			m_librarySessions[index(model)] = std::make_unique<LibrarySession>(*this, model);
 		}
-		m_librarySession = std::make_unique<LibrarySession>(*this);
 	}
 
-	void CombinedProcessor::closeLibrarySession()
+	void CombinedProcessor::closeLibrary()
 	{
-		if(!m_librarySession)
-			return;
-		const bool changed = m_librarySession->changedMachine();
-		m_librarySession.reset();
-		if(changed)
-			restoreLibrarySnapshot();
+		for(const auto model : {md::MachineModel::Machinedrum, md::MachineModel::Monomachine})
+		{
+			auto& session = m_librarySessions[index(model)];
+			if(!session)
+				continue;
+			const bool changed = session->changedMachine();
+			session.reset();
+			if(changed)
+				restoreLibrarySnapshot(model);
+			std::lock_guard lock(m_librarySnapshotMutex);
+			m_librarySnapshots[index(model)].reset();
+		}
+	}
+
+	juce::MemoryBlock CombinedProcessor::librarySnapshot(const md::MachineModel _model)
+	{
 		std::lock_guard lock(m_librarySnapshotMutex);
-		m_librarySnapshot.reset();
+		return m_librarySnapshots[index(_model)];
 	}
 
-	void CombinedProcessor::restoreLibrarySnapshot()
+	void CombinedProcessor::restoreLibrarySnapshot(const md::MachineModel _model)
 	{
-		juce::MemoryBlock snapshot;
-		{
-			std::lock_guard lock(m_librarySnapshotMutex);
-			snapshot = m_librarySnapshot;
-		}
-		static_cast<juce::AudioProcessor&>(m_machinedrum).setStateInformation(
+		const auto snapshot = librarySnapshot(_model);
+		static_cast<juce::AudioProcessor&>(machine(_model)).setStateInformation(
 			snapshot.getData(), static_cast<int>(snapshot.getSize()));
 	}
 
-	void CombinedProcessor::commitLibrarySnapshot()
+	void CombinedProcessor::commitLibrarySnapshot(const md::MachineModel _model)
 	{
 		juce::MemoryBlock snapshot;
-		static_cast<juce::AudioProcessor&>(m_machinedrum).getStateInformation(snapshot);
+		static_cast<juce::AudioProcessor&>(machine(_model)).getStateInformation(snapshot);
 		std::lock_guard lock(m_librarySnapshotMutex);
-		m_librarySnapshot = std::move(snapshot);
+		m_librarySnapshots[index(_model)] = std::move(snapshot);
 	}
 
 	std::optional<CombinedProcessor::SysexCapture>
@@ -389,8 +399,9 @@ namespace mdJucePlugin
 				engine->delay.copyFrom(channel, 0, engine->audio, channel, first,
 					m_pendingSamples - first);
 			}
-			const bool privateCapture = engine == &m_md && isSysexCapturing()
-				&& m_captureModel.load(std::memory_order_acquire) == md::MachineModel::Machinedrum
+			const auto engineModel = engine == &m_md ? md::MachineModel::Machinedrum : md::MachineModel::Monomachine;
+			const bool privateCapture = isSysexCapturing()
+				&& m_captureModel.load(std::memory_order_acquire) == engineModel
 				&& !m_captureToHost.load(std::memory_order_acquire);
 			if(!privateCapture)
 				m_pendingMidi.addEvents(engine->midi, 0, m_pendingSamples, 0);
@@ -611,15 +622,12 @@ namespace mdJucePlugin
 
 	void CombinedProcessor::getStateInformation(juce::MemoryBlock& _destination)
 	{
-		juce::MemoryBlock mdState;
-		juce::MemoryBlock mmState;
-		{
-			std::lock_guard lock(m_librarySnapshotMutex);
-			mdState = m_librarySnapshot;
-		}
+		auto mdState = librarySnapshot(md::MachineModel::Machinedrum);
+		auto mmState = librarySnapshot(md::MachineModel::Monomachine);
 		if(mdState.isEmpty())
 			static_cast<juce::AudioProcessor&>(m_machinedrum).getStateInformation(mdState);
-		static_cast<juce::AudioProcessor&>(m_monomachine).getStateInformation(mmState);
+		if(mmState.isEmpty())
+			static_cast<juce::AudioProcessor&>(m_monomachine).getStateInformation(mmState);
 		juce::MemoryOutputStream stream(_destination, false);
 		stream.writeInt(static_cast<int>(g_stateMagic));
 		stream.writeInt(g_stateVersion);
@@ -660,8 +668,10 @@ namespace mdJucePlugin
 		{
 			// A project loaded during audition is what closing the library returns to.
 			std::lock_guard lock(m_librarySnapshotMutex);
-			if(!m_librarySnapshot.isEmpty())
-				m_librarySnapshot = mdState;
+			if(!m_librarySnapshots[0].isEmpty())
+				m_librarySnapshots[0] = mdState;
+			if(!m_librarySnapshots[1].isEmpty())
+				m_librarySnapshots[1] = mmState;
 		}
 		static_cast<juce::AudioProcessor&>(m_machinedrum).setStateInformation(
 			mdState.getData(), static_cast<int>(mdState.getSize()));

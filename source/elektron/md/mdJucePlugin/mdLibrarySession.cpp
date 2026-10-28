@@ -11,20 +11,17 @@ namespace mdJucePlugin
 {
 	namespace
 	{
-		constexpr auto g_model = md::MachineModel::Machinedrum;
-		// After a sample the firmware is busy CLEANING/LOADING and ignores other
-		// data. A kit request is answered only once it is idle again.
-		const std::vector<uint8_t> g_probe{0xf0, 0x00, 0x20, 0x3c, 0x02, 0x00, 0x53, 0x00, 0xf7};
 		constexpr double g_probeIntervalMs = 1000.0;
 		constexpr double g_probeTimeoutMs = 60000.0;
-		constexpr size_t g_kitCount = 64;
 		constexpr size_t g_patternCount = 128;
+		constexpr uint8_t g_patternSlot = 127;
+		// The Monomachine stores the last dump while still in SYSEX RECEIVE.
+		constexpr double g_receiveSettleMs = 1000.0;
 
-		std::vector<uint8_t> dumpRequest(const size_t _index)
+		std::vector<uint8_t> dumpRequest(const md::MachineModel _model, const uint8_t _command, const uint8_t _slot)
 		{
-			return _index < g_kitCount
-				? std::vector<uint8_t>{0xf0, 0x00, 0x20, 0x3c, 0x02, 0x00, 0x53, uint8_t(_index), 0xf7}
-				: std::vector<uint8_t>{0xf0, 0x00, 0x20, 0x3c, 0x02, 0x00, 0x68, uint8_t(_index - g_kitCount), 0xf7};
+			const uint8_t product = _model == md::MachineModel::Monomachine ? 0x03 : 0x02;
+			return {0xf0, 0x00, 0x20, 0x3c, product, 0x00, _command, _slot, 0xf7};
 		}
 
 		juce::String patternLabel(const uint8_t _slot)
@@ -60,15 +57,20 @@ namespace mdJucePlugin
 		}
 	}
 
-	LibrarySession::LibrarySession(CombinedProcessor& _processor) : m_processor(_processor) {}
+	LibrarySession::LibrarySession(CombinedProcessor& _processor, const md::MachineModel _model)
+		: m_processor(_processor), m_model(_model) {}
 
 	LibrarySession::~LibrarySession()
 	{
 		endCapture();
+		// Never leave a key held down by a key sequence cut short.
+		if(m_phase == Phase::Panel)
+			for(uint8_t row = 0x20; row <= 0x26; ++row)
+				(void)machine().sendPanelEvent(row, 0);
 		if(!m_ticket)
 			return;
 		std::vector<uint8_t> retired;
-		withDevice(m_processor.machinedrum(), [&](md::Device* _device)
+		withDevice(machine(), [&](md::Device* _device)
 		{
 			return _device && (_device->cancelUserSysexImport(*m_ticket, retired)
 				|| _device->retireUserSysexImport(*m_ticket, retired));
@@ -101,17 +103,17 @@ namespace mdJucePlugin
 		Request r;
 		r.pack = _pack.name;
 		setSamples(r, _pack, _kit.sampleSlots);
-		r.dumps = md::packlib::retargetDump(_kit.dump, g_kitSlot);
+		r.dumps = md::packlib::retargetDump(_kit.dump, auditionKitSlot());
 		if(_pattern)
 		{
-			const auto pattern = md::packlib::retargetMdPattern(_pattern->dump, g_patternSlot, g_kitSlot);
+			const auto pattern = md::packlib::retargetPattern(*_pattern, g_patternSlot, auditionKitSlot());
 			r.dumps.insert(r.dumps.end(), pattern.begin(), pattern.end());
-			r.load = md::packlib::loadPatternCommand(g_model, g_patternSlot);
+			r.load = md::packlib::loadPatternCommand(m_model, g_patternSlot);
 			r.loaded = _pattern->name + " LOADED";
 		}
 		else
 		{
-			r.load = md::packlib::loadKitCommand(g_model, g_kitSlot);
+			r.load = md::packlib::loadKitCommand(m_model, auditionKitSlot());
 			r.loaded = "KIT " + juce::String(_kit.name).toUpperCase() + " LOADED";
 		}
 		m_next = std::move(r);
@@ -149,6 +151,7 @@ namespace mdJucePlugin
 		else if(m_phase == Phase::Inventory) serviceInventory();
 		else if(m_phase == Phase::Samples || m_phase == Phase::Dumps) serviceTransfer();
 		else if(m_phase == Phase::Probe || m_phase == Phase::Settle) serviceProbe();
+		else if(m_phase == Phase::Panel) servicePanel();
 	}
 
 	void LibrarySession::startNext()
@@ -171,7 +174,7 @@ namespace mdJucePlugin
 		// Undo the audition first, so only what is imported stays.
 		if(m_changed)
 		{
-			m_processor.restoreLibrarySnapshot();
+			m_processor.restoreLibrarySnapshot(m_model);
 			m_changed = false;
 		}
 		if(!beginCapture())
@@ -197,7 +200,7 @@ namespace mdJucePlugin
 		auto contents = md::packlib::readSyx(m_processor.takeCapturedSysex());
 		for(auto& item : contents.items)
 		{
-			const auto index = item.kind == md::packlib::ItemKind::Kit ? size_t(item.slot) : g_kitCount + item.slot;
+			const auto index = item.kind == md::packlib::ItemKind::Kit ? size_t(item.slot) : kitCount() + item.slot;
 			if(index != m_inventoryNext)
 				continue;
 			item.dump.clear();
@@ -205,7 +208,7 @@ namespace mdJucePlugin
 			++m_inventoryNext;
 			m_probeSent = 0;
 		}
-		if(m_inventoryNext == g_kitCount + g_patternCount)
+		if(m_inventoryNext == kitCount() + g_patternCount)
 		{
 			endCapture();
 			planCurrentImport();
@@ -220,7 +223,8 @@ namespace mdJucePlugin
 		if(m_probeSent == 0 || t - m_probeSent >= g_probeIntervalMs)
 		{
 			m_probeSent = t;
-			sendToMachine(dumpRequest(m_inventoryNext));
+			sendToMachine(m_inventoryNext < kitCount() ? dumpRequest(m_model, 0x53, uint8_t(m_inventoryNext))
+				: dumpRequest(m_model, 0x68, uint8_t(m_inventoryNext - kitCount())));
 		}
 	}
 
@@ -279,21 +283,81 @@ namespace mdJucePlugin
 			}
 			return;
 		}
-		if(startTransfer(m_current->dumps, false))
-			m_phase = Phase::Dumps;
+		sendDumps();
+	}
+
+	void LibrarySession::sendDumps()
+	{
+		m_phase = Phase::Idle;
+		if(m_model == md::MachineModel::Machinedrum)
+		{
+			if(startTransfer(m_current->dumps, false))
+				m_phase = Phase::Dumps;
+			return;
+		}
+		m_status = "OPENING SYSEX RECEIVE...";
+		runPanel(md::mmSysexReceiveScript(), 0, [this]
+		{
+			if(startTransfer(m_current->dumps, true))
+			{
+				m_phase = Phase::Dumps;
+				m_status = "SENDING KITS AND PATTERNS...";
+			}
+		});
+	}
+
+	void LibrarySession::afterDumps()
+	{
+		if(m_current->source)
+		{
+			// The last pattern is stored once the firmware answers again.
+			startProbe(Phase::Settle);
+			m_status = "STORING...";
+			return;
+		}
+		sendToMachine(m_current->load);
+		finish(m_current->missing.isEmpty() ? m_current->loaded
+			: m_current->loaded + "  MISSING SAMPLES: " + m_current->missing);
+	}
+
+	void LibrarySession::runPanel(std::vector<md::PanelStep> _script, const double _delayMs, std::function<void()> _then)
+	{
+		m_panel = std::move(_script);
+		m_panelNext = 0;
+		m_panelAt = now() + _delayMs;
+		m_afterPanel = std::move(_then);
+		m_phase = Phase::Panel;
+	}
+
+	// Plays the key sequence in real time; the machine runs in real time too.
+	void LibrarySession::servicePanel()
+	{
+		while(m_panelNext < m_panel.size() && now() >= m_panelAt)
+		{
+			const auto& step = m_panel[m_panelNext];
+			if(!machine().sendPanelEvent(step.row, step.mask))
+				return;
+			m_panelAt = now() + step.waitFrames * 1000.0 / md::g_samplerate;
+			++m_panelNext;
+		}
+		if(m_panelNext < m_panel.size() || now() < m_panelAt)
+			return;
+		m_phase = Phase::Idle;
+		const auto then = std::move(m_afterPanel);
+		then();
 	}
 
 	// On failure the request stays current and service() retries it.
 	bool LibrarySession::startTransfer(std::vector<uint8_t> _bytes, const bool _samples)
 	{
-		auto prepared = md::prepareMidiSysexTransfer(std::move(_bytes), g_model);
+		auto prepared = md::prepareMidiSysexTransfer(std::move(_bytes), m_model);
 		if(!prepared)
 		{
 			finish("INVALID FILE");
 			return false;
 		}
 		using Start = md::SysexImportStartResult;
-		const auto result = withDevice(m_processor.machinedrum(), [&](md::Device* _device) -> std::optional<Start>
+		const auto result = withDevice(machine(), [&](md::Device* _device) -> std::optional<Start>
 		{
 			if(!_device) return std::nullopt;
 			const auto ticket = _device->beginUserSysexImport();
@@ -324,7 +388,7 @@ namespace mdJucePlugin
 
 	void LibrarySession::serviceTransfer()
 	{
-		const auto progress = withDevice(m_processor.machinedrum(), [](md::Device* _device)
+		const auto progress = withDevice(machine(), [](md::Device* _device)
 		{
 			return _device ? std::optional(_device->userSysexImportProgress()) : std::nullopt;
 		});
@@ -342,7 +406,7 @@ namespace mdJucePlugin
 			return;
 
 		std::vector<uint8_t> retired;
-		withDevice(m_processor.machinedrum(), [&](md::Device* _device)
+		withDevice(machine(), [&](md::Device* _device)
 		{
 			return _device && _device->retireUserSysexImport(*m_ticket, retired);
 		});
@@ -363,16 +427,10 @@ namespace mdJucePlugin
 			m_status = "MACHINE IS STORING SAMPLES...";
 			return;
 		}
-		if(m_current->source)
-		{
-			// The last pattern is stored once the firmware answers again.
-			startProbe(Phase::Settle);
-			m_status = "STORING...";
-			return;
-		}
-		sendToMachine(m_current->load);
-		finish(m_current->missing.isEmpty() ? m_current->loaded
-			: m_current->loaded + "  MISSING SAMPLES: " + m_current->missing);
+		if(m_model == md::MachineModel::Monomachine)
+			runPanel(md::exitMenusScript(m_model), g_receiveSettleMs, [this] { afterDumps(); });
+		else
+			afterDumps();
 	}
 
 	void LibrarySession::startProbe(const Phase _phase)
@@ -390,7 +448,7 @@ namespace mdJucePlugin
 			endCapture();
 			if(m_phase == Phase::Settle)
 			{
-				m_processor.commitLibrarySnapshot();
+				m_processor.commitLibrarySnapshot(m_model);
 				m_changed = false;
 				finish(m_current->missing.isEmpty() ? m_current->loaded
 					: m_current->loaded + "  MISSING SAMPLES: " + m_current->missing);
@@ -399,10 +457,10 @@ namespace mdJucePlugin
 			m_phase = Phase::Idle;
 			// A new audition replaces an audition, never an import half done.
 			if(m_next && !m_current->source) startNext();
-			else if(startTransfer(m_current->dumps, false))
+			else
 			{
-				m_phase = Phase::Dumps;
 				m_status = "SENDING KITS AND PATTERNS...";
+				sendDumps();
 			}
 			return;
 		}
@@ -415,15 +473,17 @@ namespace mdJucePlugin
 		if(t - m_probeSent < g_probeIntervalMs)
 			return;
 		m_probeSent = t;
+		// After samples the MD is busy CLEANING/LOADING and ignores other data;
+		// a kit request is answered only once the firmware is idle again.
 		if(beginCapture())
-			sendToMachine(g_probe);
+			sendToMachine(dumpRequest(m_model, 0x53, 0));
 	}
 
 	// Only our own capture is read and ended, never a SysEx export in progress.
 	bool LibrarySession::beginCapture()
 	{
 		if(!m_ownsCapture)
-			m_ownsCapture = m_processor.beginSysexCapture(g_model, false);
+			m_ownsCapture = m_processor.beginSysexCapture(m_model, false);
 		return m_ownsCapture;
 	}
 
@@ -438,15 +498,25 @@ namespace mdJucePlugin
 	{
 		synthLib::SMidiEvent event(synthLib::MidiEventSource::Editor);
 		event.sysex = _sysex;
-		m_processor.machinedrum().addMidiEvent(event);
+		machine().addMidiEvent(event);
 	}
 
 	uint64_t LibrarySession::hardwareEpoch()
 	{
-		return withDevice(m_processor.machinedrum(), [](md::Device* _device)
+		return withDevice(machine(), [](md::Device* _device)
 		{
 			return _device ? _device->hardwareEpoch() : uint64_t(0);
 		});
+	}
+
+	AudioPluginAudioProcessor& LibrarySession::machine()
+	{
+		return m_processor.machine(m_model);
+	}
+
+	size_t LibrarySession::kitCount() const
+	{
+		return m_model == md::MachineModel::Monomachine ? 128 : 64;
 	}
 
 	void LibrarySession::finish(const juce::String& _status)

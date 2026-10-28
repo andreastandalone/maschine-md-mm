@@ -10,8 +10,9 @@ namespace mdJucePlugin
 {
 	class CombinedProcessor;
 
-	// Full-area pack browser in the style of an Elektron menu: packs on the
-	// left, their kits and patterns on the right, audition buttons below.
+	// Full-area pack browser in the style of an Elektron menu: a tab per
+	// machine, packs on the left, their kits and patterns on the right, audition
+	// and import buttons below.
 	class LibraryView final : public juce::Component, juce::Timer
 	{
 	public:
@@ -36,7 +37,9 @@ namespace mdJucePlugin
 		};
 
 		void timerCallback() override;
+		void showMachine(md::MachineModel _model);
 		Layout layout() const;
+		juce::Rectangle<int> tabBounds(const Layout& _layout, md::MachineModel _model) const;
 		int itemCount() const;
 		juce::String itemLabel(const md::packlib::Item& _item) const;
 		const md::packlib::Item* selectedItem() const;
@@ -53,6 +56,7 @@ namespace mdJucePlugin
 
 		CombinedProcessor& m_processor;
 		juce::File m_folder;
+		md::MachineModel m_model = md::MachineModel::Machinedrum;
 		std::vector<library::Pack> m_packs;
 		Column m_columns[2];
 		int m_focus = 0;
