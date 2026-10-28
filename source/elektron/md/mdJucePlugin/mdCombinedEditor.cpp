@@ -2,6 +2,7 @@
 
 #include "mdCombinedProcessor.h"
 #include "mdEditor.h"
+#include "mdLibraryView.h"
 #include "mdLib/mdsysexfile.h"
 #include "jucePluginEditorLib/pluginEditorWindow.h"
 #include "jucePluginEditorLib/pluginEditorState.h"
@@ -12,6 +13,8 @@ namespace mdJucePlugin
 {
 	namespace
 	{
+		constexpr int g_libraryBarHeight = 28;
+
 		enum SysexCommand
 		{
 			SendMd = 1, SendMm, ResumeMd, ResumeMm, CancelMd, CancelMm,
@@ -117,6 +120,16 @@ namespace mdJucePlugin
 			}
 		}
 
+		m_libraryButton.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff0d0f0d));
+		m_libraryButton.setColour(juce::TextButton::buttonOnColourId, juce::Colour(0xffd8e6c8));
+		m_libraryButton.setColour(juce::TextButton::textColourOffId, juce::Colour(0xffd8e6c8));
+		m_libraryButton.setColour(juce::TextButton::textColourOnId, juce::Colour(0xff0d0f0d));
+		m_libraryButton.setColour(juce::ComboBox::outlineColourId, juce::Colour(0xff3c423c));
+		m_libraryButton.setClickingTogglesState(false);
+		m_libraryButton.setWantsKeyboardFocus(false);
+		m_libraryButton.onClick = [this] { toggleLibrary(); };
+		addAndMakeVisible(m_libraryButton);
+
 		const auto mdWidth = m_mdEditor ? m_mdEditor->getWidth() : 1200;
 		const auto mmWidth = m_mmEditor ? m_mmEditor->getWidth() : 1200;
 		const auto mdHeight = m_mdEditor ? m_mdEditor->getHeight() : 500;
@@ -126,7 +139,7 @@ namespace mdJucePlugin
 		m_mmNaturalWidth = std::max(1, mmWidth);
 		m_mmNaturalHeight = std::max(1, mmHeight);
 		m_naturalWidth = std::max(m_mdNaturalWidth, m_mmNaturalWidth);
-		m_naturalHeight = m_mdNaturalHeight + m_mmNaturalHeight;
+		m_naturalHeight = m_mdNaturalHeight + m_mmNaturalHeight + g_libraryBarHeight;
 		m_preferredWidth = m_naturalWidth;
 		m_preferredHeight = m_naturalHeight;
 		if(const auto* display = juce::Desktop::getInstance().getDisplays()
@@ -166,6 +179,8 @@ namespace mdJucePlugin
 
 	CombinedEditor::~CombinedEditor()
 	{
+		if(m_libraryView)
+			toggleLibrary();
 		for(auto* editor : {m_mdEditor.get(), m_mmEditor.get()})
 			if(editor) editor->removeMouseListener(this);
 		#if JUCE_MAC
@@ -297,11 +312,38 @@ namespace mdJucePlugin
 		_graphics.fillAll(juce::Colours::black);
 	}
 
+	void CombinedEditor::toggleLibrary()
+	{
+		const bool open = !m_libraryView;
+		if(open)
+		{
+			m_processor.openLibrarySession();
+			m_libraryView = std::make_unique<LibraryView>(m_processor);
+			addAndMakeVisible(*m_libraryView);
+		}
+		else
+		{
+			m_libraryView.reset();
+			m_processor.closeLibrarySession();
+		}
+		for(auto* editor : {m_mdEditor.get(), m_mmEditor.get()})
+			if(editor) editor->setVisible(!open);
+		m_libraryButton.setToggleState(open, juce::dontSendNotification);
+		resized();
+		if(open)
+			m_libraryView->grabKeyboardFocus();
+	}
+
 	void CombinedEditor::resized()
 	{
+		auto bar = getLocalBounds().removeFromTop(g_libraryBarHeight);
+		m_libraryButton.setBounds(bar.removeFromLeft(120).reduced(4, 3));
+		if(m_libraryView)
+			m_libraryView->setBounds(getLocalBounds().withTrimmedTop(g_libraryBarHeight));
 		const auto scale = std::min(
 			static_cast<double>(getWidth()) / m_naturalWidth,
-			static_cast<double>(getHeight()) / m_naturalHeight);
+			static_cast<double>(getHeight() - g_libraryBarHeight)
+				/ (m_naturalHeight - g_libraryBarHeight));
 		const auto mdWidth = std::max(1,
 			static_cast<int>(m_mdNaturalWidth * scale));
 		const auto mdHeight = std::max(1,
@@ -311,7 +353,8 @@ namespace mdJucePlugin
 		const auto mmHeight = std::max(1,
 			static_cast<int>(m_mmNaturalHeight * scale));
 		const auto contentHeight = mdHeight + mmHeight;
-		const auto top = (getHeight() - contentHeight) / 2;
+		const auto top = g_libraryBarHeight
+			+ (getHeight() - g_libraryBarHeight - contentHeight) / 2;
 		if(m_mdEditor)
 			m_mdEditor->setBounds((getWidth() - mdWidth) / 2, top,
 				mdWidth, mdHeight);

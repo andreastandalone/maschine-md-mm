@@ -8,6 +8,7 @@ namespace mdJucePlugin
 {
 	class CombinedProcessor;
 	class Editor;
+	class LibraryView;
 
 	class CombinedEditor final : public juce::AudioProcessorEditor,
 		private juce::Timer
@@ -31,6 +32,7 @@ namespace mdJucePlugin
 		void timerCallback() override;
 		void restorePreferredSize();
 		void fixParentWindowSize() const;
+		void toggleLibrary();
 
 		CombinedProcessor& m_processor;
 		std::unique_ptr<SysexMenu> m_sysexMenu;
@@ -40,6 +42,10 @@ namespace mdJucePlugin
 		juce::File m_sysexSaveFile;
 		std::unique_ptr<juce::AudioProcessorEditor> m_mdEditor;
 		std::unique_ptr<juce::AudioProcessorEditor> m_mmEditor;
+		juce::TextButton m_libraryButton{"LIBRERIA"};
+		// Replaces both machine panels while open: they are native views that
+		// would cover any sibling drawn over them.
+		std::unique_ptr<LibraryView> m_libraryView;
 		juce::ComponentBoundsConstrainer m_sizeConstrainer;
 		int m_mdNaturalWidth = 1100;
 		int m_mdNaturalHeight = 570;
