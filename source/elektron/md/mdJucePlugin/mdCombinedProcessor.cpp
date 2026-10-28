@@ -490,6 +490,12 @@ namespace mdJucePlugin
 		const auto focused = m_maschine.focusedModel();
 		const auto selectedMmTrack = m_maschine.selectedMonomachineTrack();
 		const auto mmNoteChannel = m_monomachine.getMonomachineNoteChannel(selectedMmTrack);
+		const bool byChannel = m_midiByChannel.load(std::memory_order_relaxed);
+		const auto mdBase = byChannel ? m_machinedrum.getMidiBaseChannel() : uint8_t(0x7f);
+		std::array<uint8_t, 6> mmTrackChannels{};
+		if(byChannel)
+			for(uint8_t track = 0; track < mmTrackChannels.size(); ++track)
+				mmTrackChannels[track] = m_monomachine.getMonomachineNoteChannel(track);
 		for(const auto event : _midi)
 		{
 			const auto message = event.getMessage();
@@ -497,6 +503,28 @@ namespace mdJucePlugin
 			const auto size = message.getRawDataSize();
 			if(!bytes || size <= 0 || event.samplePosition >= samples)
 				continue;
+			if(byChannel && bytes[0] < 0xf0)
+			{
+				const auto route = CombinedMidiRouter::routeByChannel(bytes[0] & 0x0f, mdBase, mmTrackChannels);
+				auto routed = message;
+				routed.setChannel(route.channel + 1);
+				if(route.machine == CombinedMidiRouter::machinedrum)
+					m_md.midi.addEvent(routed, event.samplePosition);
+				else if(route.machine == CombinedMidiRouter::monomachine && !route.selectedTrack)
+					m_mm.midi.addEvent(routed, event.samplePosition);
+				else if(route.machine == CombinedMidiRouter::monomachine)
+				{
+					const auto channels = m_midiRouter.monomachineChannels(bytes[0],
+						size > 1 ? bytes[1] : 0, size > 2 ? bytes[2] : 0, mmNoteChannel);
+					for(int channel = 0; channel < 16; ++channel)
+						if(channels & (1u << channel))
+						{
+							routed.setChannel(channel + 1);
+							m_mm.midi.addEvent(routed, event.samplePosition);
+						}
+				}
+				continue;
+			}
 			const auto destinations = m_midiRouter.route(bytes[0],
 				size > 1 ? bytes[1] : 0, size > 2 ? bytes[2] : 0, focused);
 			if(destinations & CombinedMidiRouter::machinedrum)
@@ -601,6 +629,8 @@ namespace mdJucePlugin
 		stream.write(mdState.getData(), mdState.getSize());
 		stream.writeInt(static_cast<int>(mmState.getSize()));
 		stream.write(mmState.getData(), mmState.getSize());
+		// Appended after the version-1 layout, which older builds read and ignore.
+		stream.writeByte(m_midiByChannel.load() ? 1 : 0);
 	}
 
 	void CombinedProcessor::setStateInformation(const void* const _data,
@@ -626,6 +656,7 @@ namespace mdJucePlugin
 		juce::MemoryBlock mmState(static_cast<size_t>(mmSize));
 		if(stream.read(mmState.getData(), mmState.getSize()) != mmSize)
 			return;
+		m_midiByChannel.store(!stream.isExhausted() && stream.readByte() != 0);
 		{
 			// A project loaded during audition is what closing the library returns to.
 			std::lock_guard lock(m_librarySnapshotMutex);

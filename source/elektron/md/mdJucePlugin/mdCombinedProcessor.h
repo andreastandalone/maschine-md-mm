@@ -24,6 +24,10 @@ namespace mdJucePlugin
 		~CombinedProcessor() override;
 
 		void setFocusedModel(md::MachineModel _model) { m_maschine.setFocusedModel(_model); }
+		// Host MIDI follows the focused machine, or is split by channel
+		// (CombinedMidiRouter::routeByChannel). Saved with the project.
+		void setMidiByChannel(bool _byChannel) { m_midiByChannel.store(_byChannel); }
+		bool midiByChannel() const { return m_midiByChannel.load(); }
 
 		AudioPluginAudioProcessor& machinedrum() { return m_machinedrum; }
 		AudioPluginAudioProcessor& monomachine() { return m_monomachine; }
@@ -128,6 +132,7 @@ namespace mdJucePlugin
 		std::atomic<bool> m_captureEnabled{false};
 		std::atomic<bool> m_captureIncomplete{false};
 		std::atomic<bool> m_captureToHost{true};
+		std::atomic<bool> m_midiByChannel{false};
 		std::atomic<md::MachineModel> m_captureModel{md::MachineModel::Machinedrum};
 		bool m_capturePreviousHostRoute = false;
 		std::atomic<bool> m_stoppingWorker{false};

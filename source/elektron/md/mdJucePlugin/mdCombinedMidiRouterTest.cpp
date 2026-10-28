@@ -101,5 +101,30 @@ int main()
 		&& router.monomachineChannels(0x80, 71, 0, 0x7f) == (1u << 4),
 		"lost note-off when MIDI configuration became unavailable");
 
+	// Channel layout: host 1-4 play the MD's four channels from its base, host
+	// 5-10 the six MM tracks, host 11 the selected MM track; the rest is unused.
+	{
+		const std::array<uint8_t, 6> mmTracks{0, 1, 2, 3, 4, 5};
+		const auto byChannel = [&](uint8_t host, uint8_t mdBase, const std::array<uint8_t, 6>& tracks)
+		{
+			return Router::routeByChannel(host, mdBase, tracks);
+		};
+		expect(byChannel(0, 0, mmTracks).machine == Router::machinedrum && byChannel(0, 0, mmTracks).channel == 0
+			&& byChannel(3, 0, mmTracks).channel == 3, "host channels 1-4 missed the MD");
+		expect(byChannel(1, 9, mmTracks).machine == Router::machinedrum && byChannel(1, 9, mmTracks).channel == 10,
+			"MD base channel ignored");
+		expect(byChannel(0, 0x7f, mmTracks).machine == 0, "MD with MIDI off still received");
+		expect(byChannel(13, 13, mmTracks).machine == 0, "MD channels wrapped past 16");
+		expect(byChannel(4, 0, mmTracks).machine == Router::monomachine && byChannel(4, 0, mmTracks).channel == 0
+			&& byChannel(9, 0, mmTracks).channel == 5, "host channels 5-10 missed the MM tracks");
+		auto noTrack3 = mmTracks;
+		noTrack3[2] = 0x7f;
+		expect(byChannel(6, 0, noTrack3).machine == 0, "MM track without a channel still received");
+		expect(byChannel(10, 0, mmTracks).machine == Router::monomachine && byChannel(10, 0, mmTracks).selectedTrack,
+			"host channel 11 does not follow the selected MM track");
+		expect(byChannel(11, 0, mmTracks).machine == 0 && byChannel(15, 0, mmTracks).machine == 0,
+			"unused host channels reached a machine");
+	}
+
 	std::cout << "Combined MIDI focus routing: PASS\n";
 }

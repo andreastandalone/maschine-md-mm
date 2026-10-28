@@ -120,15 +120,22 @@ namespace mdJucePlugin
 			}
 		}
 
-		m_libraryButton.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff0d0f0d));
-		m_libraryButton.setColour(juce::TextButton::buttonOnColourId, juce::Colour(0xffd8e6c8));
-		m_libraryButton.setColour(juce::TextButton::textColourOffId, juce::Colour(0xffd8e6c8));
-		m_libraryButton.setColour(juce::TextButton::textColourOnId, juce::Colour(0xff0d0f0d));
-		m_libraryButton.setColour(juce::ComboBox::outlineColourId, juce::Colour(0xff3c423c));
-		m_libraryButton.setClickingTogglesState(false);
-		m_libraryButton.setWantsKeyboardFocus(false);
+		for(auto* button : {&m_libraryButton, &m_midiButton})
+		{
+			button->setColour(juce::TextButton::buttonColourId, juce::Colour(0xff0d0f0d));
+			button->setColour(juce::TextButton::buttonOnColourId, juce::Colour(0xffd8e6c8));
+			button->setColour(juce::TextButton::textColourOffId, juce::Colour(0xffd8e6c8));
+			button->setColour(juce::TextButton::textColourOnId, juce::Colour(0xff0d0f0d));
+			button->setWantsKeyboardFocus(false);
+			addAndMakeVisible(*button);
+		}
 		m_libraryButton.onClick = [this] { toggleLibrary(); };
-		addAndMakeVisible(m_libraryButton);
+		m_midiButton.onClick = [this]
+		{
+			m_processor.setMidiByChannel(!m_processor.midiByChannel());
+			updateMidiButton();
+		};
+		updateMidiButton();
 
 		const auto mdWidth = m_mdEditor ? m_mdEditor->getWidth() : 1200;
 		const auto mmWidth = m_mmEditor ? m_mmEditor->getWidth() : 1200;
@@ -334,10 +341,18 @@ namespace mdJucePlugin
 			m_libraryView->grabKeyboardFocus();
 	}
 
+	void CombinedEditor::updateMidiButton()
+	{
+		const bool byChannel = m_processor.midiByChannel();
+		m_midiButton.setButtonText(byChannel ? "MIDI: CANALI" : "MIDI: FOCUS");
+		m_midiButton.setToggleState(byChannel, juce::dontSendNotification);
+	}
+
 	void CombinedEditor::resized()
 	{
 		auto bar = getLocalBounds().removeFromTop(g_libraryBarHeight);
 		m_libraryButton.setBounds(bar.removeFromLeft(120).reduced(4, 3));
+		m_midiButton.setBounds(bar.removeFromLeft(140).reduced(4, 3));
 		if(m_libraryView)
 			m_libraryView->setBounds(getLocalBounds().withTrimmedTop(g_libraryBarHeight));
 		const auto scale = std::min(

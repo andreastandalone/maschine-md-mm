@@ -16,6 +16,36 @@ namespace mdJucePlugin
 		static constexpr uint8_t monomachine = 2;
 		static constexpr uint8_t both = machinedrum | monomachine;
 
+		struct ChannelRoute
+		{
+			uint8_t machine = 0;          // machinedrum, monomachine, or 0 for none
+			uint8_t channel = 0;          // zero-based channel on that machine
+			bool selectedTrack = false;   // MM: follow the selected track instead
+		};
+
+		// MIDI by channel, like hardware on one MIDI cable but without setting
+		// the machines up: host 1-4 play the MD's four channels from its base,
+		// host 5-10 the six MM tracks, host 11 the selected MM track. Channels
+		// are zero-based; 0x7f means the machine has that MIDI route disabled.
+		static ChannelRoute routeByChannel(const uint8_t _hostChannel, const uint8_t _mdBase,
+			const std::array<uint8_t, 6>& _mmTrackChannels)
+		{
+			if(_hostChannel < 4)
+			{
+				const auto channel = _mdBase + _hostChannel;
+				return _mdBase < 16 && channel < 16
+					? ChannelRoute{machinedrum, uint8_t(channel)} : ChannelRoute{};
+			}
+			if(_hostChannel < 10)
+			{
+				const auto channel = _mmTrackChannels[_hostChannel - 4];
+				return channel < 16 ? ChannelRoute{monomachine, channel} : ChannelRoute{};
+			}
+			if(_hostChannel == 10)
+				return {monomachine, 0, true};
+			return {};
+		}
+
 		void reset()
 		{
 			for(auto& channel : m_noteOwners)
