@@ -1,6 +1,7 @@
 #include "mdCombinedProcessor.h"
 
 #include "mdCombinedEditor.h"
+#include "mdLibrarySession.h"
 #include "mdLib/mddevice.h"
 #include "mdLib/mdsysexfile.h"
 
@@ -95,6 +96,7 @@ namespace mdJucePlugin
 
 	CombinedProcessor::~CombinedProcessor()
 	{
+		m_librarySession.reset();
 		if(isSysexCapturing())
 			(void)endSysexCapture();
 		stopFastBootWorkers();
@@ -128,6 +130,41 @@ namespace mdJucePlugin
 		m_captureEnabled.store(true, std::memory_order_release);
 		routing.setEnabled(Source::Device, Source::Host, Type::SysEx, true);
 		return true;
+	}
+
+	bool CombinedProcessor::hasCapturedSysex()
+	{
+		std::lock_guard lock(m_captureMutex);
+		return !m_captureBytes.empty();
+	}
+
+	void CombinedProcessor::openLibrarySession()
+	{
+		if(m_librarySession)
+			return;
+		juce::MemoryBlock snapshot;
+		static_cast<juce::AudioProcessor&>(m_machinedrum).getStateInformation(snapshot);
+		{
+			std::lock_guard lock(m_librarySnapshotMutex);
+			m_librarySnapshot = std::move(snapshot);
+		}
+		m_librarySession = std::make_unique<LibrarySession>(*this);
+	}
+
+	void CombinedProcessor::closeLibrarySession()
+	{
+		if(!m_librarySession)
+			return;
+		const bool changed = m_librarySession->changedMachine();
+		m_librarySession.reset();
+		juce::MemoryBlock snapshot;
+		{
+			std::lock_guard lock(m_librarySnapshotMutex);
+			std::swap(snapshot, m_librarySnapshot);
+		}
+		if(changed)
+			static_cast<juce::AudioProcessor&>(m_machinedrum).setStateInformation(
+				snapshot.getData(), static_cast<int>(snapshot.getSize()));
 	}
 
 	std::optional<CombinedProcessor::SysexCapture>
@@ -519,7 +556,12 @@ namespace mdJucePlugin
 	{
 		juce::MemoryBlock mdState;
 		juce::MemoryBlock mmState;
-		static_cast<juce::AudioProcessor&>(m_machinedrum).getStateInformation(mdState);
+		{
+			std::lock_guard lock(m_librarySnapshotMutex);
+			mdState = m_librarySnapshot;
+		}
+		if(mdState.isEmpty())
+			static_cast<juce::AudioProcessor&>(m_machinedrum).getStateInformation(mdState);
 		static_cast<juce::AudioProcessor&>(m_monomachine).getStateInformation(mmState);
 		juce::MemoryOutputStream stream(_destination, false);
 		stream.writeInt(static_cast<int>(g_stateMagic));
@@ -555,6 +597,12 @@ namespace mdJucePlugin
 		juce::MemoryBlock mmState(static_cast<size_t>(mmSize));
 		if(stream.read(mmState.getData(), mmState.getSize()) != mmSize)
 			return;
+		{
+			// A project loaded during audition is what closing the library returns to.
+			std::lock_guard lock(m_librarySnapshotMutex);
+			if(!m_librarySnapshot.isEmpty())
+				m_librarySnapshot = mdState;
+		}
 		static_cast<juce::AudioProcessor&>(m_machinedrum).setStateInformation(
 			mdState.getData(), static_cast<int>(mdState.getSize()));
 		static_cast<juce::AudioProcessor&>(m_monomachine).setStateInformation(

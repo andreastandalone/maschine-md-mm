@@ -7,6 +7,7 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 
 #include <atomic>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <thread>
@@ -14,6 +15,8 @@
 
 namespace mdJucePlugin
 {
+	class LibrarySession;
+
 	class CombinedProcessor final : public juce::AudioProcessor
 	{
 	public:
@@ -34,6 +37,13 @@ namespace mdJucePlugin
 		bool beginSysexCapture(md::MachineModel _model);
 		std::optional<SysexCapture> endSysexCapture();
 		bool isSysexCapturing() const { return m_captureEnabled.load(); }
+		bool hasCapturedSysex();
+
+		// While the library is open the Machinedrum plays auditioned data; the
+		// state saved by the host stays the one from before it opened.
+		void openLibrarySession();
+		void closeLibrarySession();
+		LibrarySession* librarySession() { return m_librarySession.get(); }
 
 		void prepareToPlay(double _sampleRate, int _maximumBlockSize) override;
 		void releaseResources() override;
@@ -117,6 +127,9 @@ namespace mdJucePlugin
 		std::thread m_mdFastBootWorker;
 		std::thread m_mmFastBootWorker;
 		int m_maximumBlockSize = 0;
+		std::unique_ptr<LibrarySession> m_librarySession;
+		std::mutex m_librarySnapshotMutex;
+		juce::MemoryBlock m_librarySnapshot;
 
 		JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(CombinedProcessor)
 	};

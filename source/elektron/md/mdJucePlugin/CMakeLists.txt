@@ -24,6 +24,7 @@ set(SOURCES
 	mdLcdInteractionModel.cpp mdLcdInteractionModel.h
 	mdLcdViewport.h
 	mdLibraryScanner.cpp mdLibraryScanner.h
+	mdLibrarySession.cpp mdLibrarySession.h
 	mdMaschineNihiaClient.cpp mdMaschineNihiaClient.h
 	mdMaschineNihiaProtocol.cpp mdMaschineNihiaProtocol.h
 	mdMaschineScreenRenderer.cpp mdMaschineScreenRenderer.h
