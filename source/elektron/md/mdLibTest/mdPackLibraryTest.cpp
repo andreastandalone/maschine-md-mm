@@ -163,6 +163,16 @@ int main(int _argc, char** _argv)
 		expect(c.samples[0].bytes.size() == bytes.size(), "sample bytes incomplete");
 		expect(c.items.empty(), "sample name read as item");
 	}
+	// nameAfterPackets: a trailing name would stall the transfer in receive mode
+	{
+		Bytes sample = sdsHeader(3, 80);
+		append(sample, sdsPacket(0));
+		append(sample, sdsPacket(1));
+		Bytes bytes = sample;
+		append(bytes, {0xf0, 0x00, 0x20, 0x3c, 0x02, 0x00, 0x73, 0x03, 'S', 'N', 'A', 'R', 0xf7});
+		const auto c = readSyx(bytes);
+		expect(c.samples.size() == 1 && c.samples[0].bytes == sample, "trailing sample name kept in sample");
+	}
 	// junk and other models
 	{
 		expect(readSyx({0x12, 0x34, 0xf0, 0x01, 0xf7}).items.empty(), "junk produced items");

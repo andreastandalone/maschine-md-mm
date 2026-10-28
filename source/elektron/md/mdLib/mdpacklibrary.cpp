@@ -147,15 +147,22 @@ namespace md::packlib
 	{
 		FileContents contents;
 		Bytes sample;
+		bool samplePackets = false;
 		for(auto& m : splitMessages(_bytes))
 		{
 			if(isSdsHeader(m))
 			{
 				addSample(contents, std::move(sample));
 				sample = std::move(m);
+				samplePackets = false;
 			}
-			else if(!sample.empty() && (isSdsPacket(m) || isSampleName(m)))
+			// A name after the packets would make the sender wait for receive
+			// mode; it belongs to the sample only before its first packet.
+			else if(!sample.empty() && (isSdsPacket(m) || (isSampleName(m) && !samplePackets)))
+			{
+				samplePackets |= isSdsPacket(m);
 				sample.insert(sample.end(), m.begin(), m.end());
+			}
 			else
 			{
 				addSample(contents, std::move(sample));

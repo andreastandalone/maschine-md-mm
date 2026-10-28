@@ -51,6 +51,7 @@ namespace mdJucePlugin
 		void serviceProbe();
 		void sendToMachine(const std::vector<uint8_t>& _sysex);
 		void finish(const juce::String& _status);
+		uint64_t hardwareEpoch();
 
 		CombinedProcessor& m_processor;
 		std::optional<Request> m_current;
@@ -58,6 +59,7 @@ namespace mdJucePlugin
 		Phase m_phase = Phase::Idle;
 		std::optional<md::SysexImportTicket> m_ticket;
 		std::map<uint8_t, juce::String> m_sentSamples;  // slot -> pack it came from
+		uint64_t m_sentSamplesEpoch = 0;                // machine they were sent to
 		double m_probeStarted = 0;
 		double m_probeSent = 0;
 		bool m_changed = false;

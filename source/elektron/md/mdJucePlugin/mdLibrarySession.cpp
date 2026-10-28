@@ -108,6 +108,9 @@ namespace mdJucePlugin
 		m_next.reset();
 		if(!m_current)
 			return;
+		// A restored or rebooted machine is a new one with its own samples.
+		if(hardwareEpoch() != m_sentSamplesEpoch)
+			m_sentSamples.clear();
 		std::vector<uint8_t> samples;
 		size_t count = 0;
 		for(const auto& sample : m_current->samples)
@@ -199,6 +202,9 @@ namespace mdJucePlugin
 		}
 		if(m_phase == Phase::Samples)
 		{
+			if(hardwareEpoch() != m_sentSamplesEpoch)
+				m_sentSamples.clear();
+			m_sentSamplesEpoch = hardwareEpoch();
 			for(const auto& sample : m_current->samples)
 				m_sentSamples[sample.slot] = m_current->pack;
 			m_phase = Phase::Probe;
@@ -241,6 +247,14 @@ namespace mdJucePlugin
 		synthLib::SMidiEvent event(synthLib::MidiEventSource::Editor);
 		event.sysex = _sysex;
 		m_processor.machinedrum().addMidiEvent(event);
+	}
+
+	uint64_t LibrarySession::hardwareEpoch()
+	{
+		return withDevice(m_processor.machinedrum(), [](md::Device* _device)
+		{
+			return _device ? _device->hardwareEpoch() : uint64_t(0);
+		});
 	}
 
 	void LibrarySession::finish(const juce::String& _status)
