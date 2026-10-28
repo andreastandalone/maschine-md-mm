@@ -588,7 +588,21 @@ namespace mdJucePlugin
 			juceRmlUi::EventListener::Add(document, Rml::EventId::Keydown,
 				[this](Rml::Event& _event)
 				{
-					if(juceRmlUi::helper::getKeyIdentifier(_event) != Rml::Input::KI_ESCAPE
+					// Computer arrow keys tap the panel arrows of the machine
+					// whose panel has keyboard focus.
+					const auto key = juceRmlUi::helper::getKeyIdentifier(_event);
+					const auto arrow = key == Rml::Input::KI_UP ? md::PanelControl::Up
+						: key == Rml::Input::KI_DOWN ? md::PanelControl::Down
+						: key == Rml::Input::KI_LEFT ? md::PanelControl::Left
+						: key == Rml::Input::KI_RIGHT ? md::PanelControl::Right
+						: std::optional<md::PanelControl>();
+					if(arrow)
+					{
+						_event.StopPropagation();
+						queuePanelPulse(*arrow, 1);
+						return;
+					}
+					if(key != Rml::Input::KI_ESCAPE
 						|| (m_shiftPanelLatch.empty() && m_activePanelButtons.empty()
 							&& m_panelGesturePackets.empty() && !m_patternBankPacket
 							&& !m_encoderPress.active() && !m_lcdDragGesture.active()))
