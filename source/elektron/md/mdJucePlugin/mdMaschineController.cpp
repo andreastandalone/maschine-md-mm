@@ -1276,8 +1276,16 @@ namespace mdJucePlugin::maschine
 			md::PanelControl::ClassicExtended, md::PanelControl::TrigSelect,
 		};
 
+		// Tests run whole plug-ins without touching the user's controller.
+		const bool disabled = std::getenv("MDMM_MASCHINE_DISABLED") != nullptr;
 		while(!m_stopping.load())
 		{
+			if(disabled)
+			{
+				std::unique_lock waitLock(m_waitMutex);
+				m_waitCondition.wait(waitLock, [this] { return m_stopping.load(); });
+				continue;
+			}
 			if(!m_client.isConnected())
 			{
 				if(!m_client.connect())

@@ -397,6 +397,12 @@ if(BUILD_TESTING)
 	set_tests_properties(mdSysexLifecycleTest PROPERTIES
 		LABELS "Integration;FirmwareTest" SKIP_RETURN_CODE 77 TIMEOUT 600)
 
+	add_md_automation_firmware_test(mdLibrarySessionTest mdLibrarySessionTest.cpp)
+	add_test(NAME mdLibrarySessionTest COMMAND mdLibrarySessionTest
+		"$ENV{HOME}/Documents/Gearmulator Preview/Library")
+	set_tests_properties(mdLibrarySessionTest PROPERTIES
+		LABELS "Integration;FirmwareTest;Library" SKIP_RETURN_CODE 77 TIMEOUT 600)
+
 	add_md_automation_firmware_test(mdAutomationFirmwareTest
 		mdAutomationFirmwareTest.cpp)
 	add_test(NAME mdAutomationFirmwareTest COMMAND mdAutomationFirmwareTest)
