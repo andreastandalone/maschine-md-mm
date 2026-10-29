@@ -8,6 +8,7 @@ namespace mdJucePlugin
 	namespace
 	{
 		const juce::Colour g_background(0xff0d0f0d);
+		const juce::Colour g_backdrop = g_background.withAlpha(0.85f);
 		const juce::Colour g_text(0xffd8e6c8);
 		const juce::Colour g_divider(0xff3c423c);
 		const juce::Colour g_dim = g_text.withAlpha(0.4f);
@@ -42,13 +43,14 @@ namespace mdJucePlugin
 		m_marked.clear();
 		if(itemCount()) m_marked = {0};
 		marksChanged();
+		if(onMachineChanged) onMachineChanged();
 	}
 
 	LibraryView::Layout LibraryView::layout() const
 	{
 		Layout l;
 		auto area = getLocalBounds().reduced(getWidth() / 40, getHeight() / 40);
-		l.row = std::max(22, getHeight() / 26);
+		l.row = std::max(18, getHeight() / 24);
 		l.tabs = area.removeFromTop(l.row + l.row / 2);
 		auto buttons = area.removeFromBottom(l.row * 2);
 		l.status = area.removeFromBottom(l.row + l.row / 3);
@@ -121,7 +123,7 @@ namespace mdJucePlugin
 
 	void LibraryView::paint(juce::Graphics& _g)
 	{
-		_g.fillAll(g_background);
+		_g.fillAll(g_backdrop);
 		const auto l = layout();
 		_g.setFont(font(l.row));
 

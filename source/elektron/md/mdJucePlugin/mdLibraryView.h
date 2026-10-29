@@ -4,6 +4,7 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
+#include <functional>
 #include <map>
 #include <set>
 
@@ -11,9 +12,9 @@ namespace mdJucePlugin
 {
 	class CombinedProcessor;
 
-	// Full-area pack browser in the style of an Elektron menu: a tab per
-	// machine, packs on the left, their kits and patterns on the right, audition
-	// and import buttons below.
+	// Pack browser in the style of an Elektron menu: a tab per machine, packs on
+	// the left, their kits and patterns on the right, audition and import buttons
+	// below. Its background lets the machines show through.
 	class LibraryView final : public juce::Component, juce::Timer
 	{
 	public:
@@ -24,6 +25,9 @@ namespace mdJucePlugin
 		void mouseDoubleClick(const juce::MouseEvent& _event) override;
 		void mouseWheelMove(const juce::MouseEvent& _event, const juce::MouseWheelDetails& _wheel) override;
 		bool keyPressed(const juce::KeyPress& _key) override;
+		md::MachineModel model() const { return m_model; }
+
+		std::function<void()> onMachineChanged;
 
 	private:
 		struct Column

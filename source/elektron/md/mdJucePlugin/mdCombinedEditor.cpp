@@ -333,6 +333,7 @@ namespace mdJucePlugin
 		{
 			m_processor.openLibrary();
 			m_libraryView = std::make_unique<LibraryView>(m_processor);
+			m_libraryView->onMachineChanged = [this] { resized(); };
 			addAndMakeVisible(*m_libraryView);
 		}
 		else
@@ -340,8 +341,9 @@ namespace mdJucePlugin
 			m_libraryView.reset();
 			m_processor.closeLibrary();
 		}
+		// The machines stay in sight under the library but take no clicks.
 		for(auto* editor : {m_mdEditor.get(), m_mmEditor.get()})
-			if(editor) editor->setVisible(!open);
+			if(editor) editor->setInterceptsMouseClicks(!open, !open);
 		m_libraryButton.setToggleState(open, juce::dontSendNotification);
 		if(m_sysexMenu) m_sysexMenu->menuItemsChanged();
 		resized();
@@ -361,8 +363,6 @@ namespace mdJucePlugin
 		auto bar = getLocalBounds().removeFromTop(g_libraryBarHeight);
 		m_libraryButton.setBounds(bar.removeFromLeft(120).reduced(4, 3));
 		m_midiButton.setBounds(bar.removeFromLeft(140).reduced(4, 3));
-		if(m_libraryView)
-			m_libraryView->setBounds(getLocalBounds().withTrimmedTop(g_libraryBarHeight));
 		const auto scale = std::min(
 			static_cast<double>(getWidth()) / m_naturalWidth,
 			static_cast<double>(getHeight() - g_libraryBarHeight)
@@ -384,6 +384,13 @@ namespace mdJucePlugin
 		if(m_mmEditor)
 			m_mmEditor->setBounds((getWidth() - mmWidth) / 2, top + mdHeight,
 				mmWidth, mmHeight);
+		// The library covers the other machine, so the one it works on stays visible.
+		if(m_libraryView)
+		{
+			const bool overMd = m_libraryView->model() == md::MachineModel::Monomachine;
+			m_libraryView->setBounds(0, overMd ? g_libraryBarHeight : top + mdHeight, getWidth(),
+				overMd ? top + mdHeight - g_libraryBarHeight : getHeight() - top - mdHeight);
+		}
 	}
 
 	void CombinedEditor::timerCallback()
