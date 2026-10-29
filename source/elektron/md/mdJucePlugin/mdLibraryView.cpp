@@ -324,8 +324,12 @@ namespace mdJucePlugin
 		const auto count = column == 0 ? int(packs().size()) : itemCount();
 		const auto visible = ((column == 0 ? l.packs : l.items).getHeight() - 4) / l.row;
 		auto& c = m_columns[column];
-		if(_wheel.deltaY == 0) return;
-		const auto step = _wheel.deltaY > 0 ? -3 : 3;
+		// Follows the wheel distance as juce::Viewport does: a trackpad sends many
+		// small deltas, a mouse notch one larger one.
+		m_wheelRows -= _wheel.deltaY * 224.0f / float(l.row);
+		const auto step = int(m_wheelRows);
+		if(step == 0) return;
+		m_wheelRows -= float(step);
 		c.first = juce::jlimit(0, std::max(0, count - visible), c.first + step);
 		repaint();
 	}

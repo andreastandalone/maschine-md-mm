@@ -66,6 +66,7 @@ namespace mdJucePlugin
 		std::map<md::MachineModel, std::vector<library::Pack>> m_scans;
 		Column m_columns[2];
 		int m_focus = 0;
+		float m_wheelRows = 0;                   // wheel distance not scrolled yet
 		std::set<int> m_marked;                  // items picked for IMPORT
 		juce::String m_shownStatus;              // both machines, to repaint on any change
 		juce::String m_hint;

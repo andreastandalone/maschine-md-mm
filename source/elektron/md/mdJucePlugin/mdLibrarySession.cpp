@@ -197,6 +197,7 @@ namespace mdJucePlugin
 	void LibrarySession::startInventory()
 	{
 		// Undo the audition first, so only what is imported stays.
+		const bool restarts = m_changed;
 		if(m_changed)
 		{
 			m_processor.restoreLibrarySnapshot(m_model);
@@ -214,7 +215,7 @@ namespace mdJucePlugin
 		m_phase = Phase::Inventory;
 		m_probeStarted = now();
 		m_probeSent = 0;
-		m_status = "READING FREE SLOTS...";
+		m_status = restarts ? "UNDOING AUDITION: MACHINE RESTARTS..." : "READING FREE SLOTS...";
 	}
 
 	// One request at a time: the firmware answers each in a few milliseconds,
@@ -230,7 +231,8 @@ namespace mdJucePlugin
 				continue;
 			item.dump.clear();
 			m_machineItems.push_back(std::move(item));
-			++m_inventoryNext;
+			if(m_inventoryNext++ == 0)
+				m_status = "READING FREE SLOTS...";
 			m_probeSent = 0;
 			m_probeStarted = t;
 		}
@@ -281,6 +283,17 @@ namespace mdJucePlugin
 			r.loaded << "  SAMPLES " << slotList(plan.sampleSlots, [](uint8_t _s) { return juce::String(_s + 1); });
 		if(plan.skippedPatterns)
 			r.loaded << "  (" << int(plan.skippedPatterns) << " PATTERNS WITHOUT KIT SKIPPED)";
+		// What was imported plays next, as the audition did.
+		if(!plan.patternSlots.empty())
+		{
+			r.load = md::packlib::loadPatternCommand(m_model, plan.patternSlots.front());
+			r.loaded << "  NOW PLAYING " << patternLabel(plan.patternSlots.front());
+		}
+		else if(!plan.kitSlots.empty())
+		{
+			r.load = md::packlib::loadKitCommand(m_model, plan.kitSlots.front());
+			r.loaded << "  NOW PLAYING KIT " << juce::String(plan.kitSlots.front() + 1).paddedLeft('0', 2);
+		}
 		m_phase = Phase::Idle;
 		startCurrent();
 	}
@@ -348,13 +361,12 @@ namespace mdJucePlugin
 
 	void LibrarySession::verified()
 	{
+		sendToMachine(m_current->load);
 		if(m_current->source)
 		{
 			m_processor.commitLibrarySnapshot(m_model);
 			m_changed = false;
 		}
-		else
-			sendToMachine(m_current->load);
 		finish(m_current->missing.isEmpty() ? m_current->loaded
 			: m_current->loaded + "  MISSING SAMPLES: " + m_current->missing);
 	}

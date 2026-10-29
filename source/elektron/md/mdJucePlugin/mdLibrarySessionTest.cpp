@@ -110,7 +110,7 @@ int main(int _argc, char** _argv)
 				}
 				std::this_thread::sleep_for(std::chrono::milliseconds(10));
 			}
-			if(!session->status().startsWith("IMPORTED"))
+			if(!session->status().startsWith("IMPORTED") || !session->status().contains("NOW PLAYING"))
 				fail(juce::String(_packName) + " import ended with: " + session->status());
 		};
 		import(md::MachineModel::Machinedrum, "DUB1", 4);
