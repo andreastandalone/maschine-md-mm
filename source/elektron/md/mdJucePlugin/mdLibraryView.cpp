@@ -8,7 +8,6 @@ namespace mdJucePlugin
 	namespace
 	{
 		const juce::Colour g_background(0xff0d0f0d);
-		const juce::Colour g_backdrop = g_background.withAlpha(0.85f);
 		const juce::Colour g_text(0xffd8e6c8);
 		const juce::Colour g_divider(0xff3c423c);
 		const juce::Colour g_dim = g_text.withAlpha(0.4f);
@@ -123,7 +122,7 @@ namespace mdJucePlugin
 
 	void LibraryView::paint(juce::Graphics& _g)
 	{
-		_g.fillAll(g_backdrop);
+		_g.fillAll(g_background);
 		const auto l = layout();
 		_g.setFont(font(l.row));
 

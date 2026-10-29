@@ -14,7 +14,7 @@ namespace mdJucePlugin
 
 	// Pack browser in the style of an Elektron menu: a tab per machine, packs on
 	// the left, their kits and patterns on the right, audition and import buttons
-	// below. Its background lets the machines show through.
+	// below.
 	class LibraryView final : public juce::Component, juce::Timer
 	{
 	public:

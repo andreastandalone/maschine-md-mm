@@ -341,7 +341,7 @@ namespace mdJucePlugin
 			m_libraryView.reset();
 			m_processor.closeLibrary();
 		}
-		// The machines stay in sight under the library but take no clicks.
+		// The machine the library works on stays in sight but takes no clicks.
 		for(auto* editor : {m_mdEditor.get(), m_mmEditor.get()})
 			if(editor) editor->setInterceptsMouseClicks(!open, !open);
 		m_libraryButton.setToggleState(open, juce::dontSendNotification);
@@ -384,13 +384,16 @@ namespace mdJucePlugin
 		if(m_mmEditor)
 			m_mmEditor->setBounds((getWidth() - mmWidth) / 2, top + mdHeight,
 				mmWidth, mmHeight);
-		// The library covers the other machine, so the one it works on stays visible.
+		// The library takes the other machine's place, so the one it works on
+		// stays visible. The editors draw on their own GPU surface, above any
+		// sibling, so the covered one is hidden rather than overlapped.
+		const bool overMd = m_libraryView && m_libraryView->model() == md::MachineModel::Monomachine;
+		const bool overMm = m_libraryView && !overMd;
+		if(m_mdEditor) m_mdEditor->setVisible(!overMd);
+		if(m_mmEditor) m_mmEditor->setVisible(!overMm);
 		if(m_libraryView)
-		{
-			const bool overMd = m_libraryView->model() == md::MachineModel::Monomachine;
 			m_libraryView->setBounds(0, overMd ? g_libraryBarHeight : top + mdHeight, getWidth(),
 				overMd ? top + mdHeight - g_libraryBarHeight : getHeight() - top - mdHeight);
-		}
 	}
 
 	void CombinedEditor::timerCallback()
