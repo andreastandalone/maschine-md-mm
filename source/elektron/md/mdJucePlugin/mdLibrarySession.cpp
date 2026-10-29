@@ -240,7 +240,8 @@ namespace mdJucePlugin
 			planCurrentImport();
 			return;
 		}
-		if(t - m_probeStarted > g_verifyTimeoutMs)
+		// The first reply may wait for a machine still booting or restoring.
+		if(t - m_probeStarted > (m_inventoryNext == 0 ? g_probeTimeoutMs : g_verifyTimeoutMs))
 		{
 			endCapture();
 			finish("MACHINE NOT RESPONDING");
