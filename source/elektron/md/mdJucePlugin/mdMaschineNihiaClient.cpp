@@ -430,6 +430,13 @@ namespace mdJucePlugin::maschine
 			m_serialBytes.clear();
 			m_serial.clear();
 		}
+		// The agent keeps a session, and a thread, until it is told to drop it;
+		// sessions left behind by retries exhaust its threads and crash it.
+		{
+			std::lock_guard sendLock(m_sendMutex);
+			for(auto* const port : {m_instanceRequestPort, m_deviceRequestPort})
+				send(port, words({0x03442d00}));
+		}
 		const auto releasePort = [](CFMessagePortRef& _port)
 		{
 			if(!_port)
