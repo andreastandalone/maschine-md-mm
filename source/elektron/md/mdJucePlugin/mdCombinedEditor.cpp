@@ -378,22 +378,28 @@ namespace mdJucePlugin
 		const auto contentHeight = mdHeight + mmHeight;
 		const auto top = g_libraryBarHeight
 			+ (getHeight() - g_libraryBarHeight - contentHeight) / 2;
+		// The library stays below and the machine it works on moves to the top,
+		// so the panel never jumps between tabs. The editors draw on their own
+		// GPU surface, above any sibling, so the other machine is hidden rather
+		// than overlapped.
+		const bool mmOnly = m_libraryView && m_libraryView->model() == md::MachineModel::Monomachine;
+		const bool mdOnly = m_libraryView && !mmOnly;
 		if(m_mdEditor)
-			m_mdEditor->setBounds((getWidth() - mdWidth) / 2, top,
-				mdWidth, mdHeight);
+		{
+			m_mdEditor->setVisible(!mmOnly);
+			m_mdEditor->setBounds((getWidth() - mdWidth) / 2, top, mdWidth, mdHeight);
+		}
 		if(m_mmEditor)
-			m_mmEditor->setBounds((getWidth() - mmWidth) / 2, top + mdHeight,
+		{
+			m_mmEditor->setVisible(!mdOnly);
+			m_mmEditor->setBounds((getWidth() - mmWidth) / 2, mmOnly ? top : top + mdHeight,
 				mmWidth, mmHeight);
-		// The library takes the other machine's place, so the one it works on
-		// stays visible. The editors draw on their own GPU surface, above any
-		// sibling, so the covered one is hidden rather than overlapped.
-		const bool overMd = m_libraryView && m_libraryView->model() == md::MachineModel::Monomachine;
-		const bool overMm = m_libraryView && !overMd;
-		if(m_mdEditor) m_mdEditor->setVisible(!overMd);
-		if(m_mmEditor) m_mmEditor->setVisible(!overMm);
+		}
 		if(m_libraryView)
-			m_libraryView->setBounds(0, overMd ? g_libraryBarHeight : top + mdHeight, getWidth(),
-				overMd ? top + mdHeight - g_libraryBarHeight : getHeight() - top - mdHeight);
+		{
+			const auto libraryTop = top + (mmOnly ? mmHeight : mdHeight);
+			m_libraryView->setBounds(0, libraryTop, getWidth(), getHeight() - libraryTop);
+		}
 	}
 
 	void CombinedEditor::timerCallback()
