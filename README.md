@@ -27,7 +27,7 @@ Suspects or the upstream authors: please report its problems here, not to them.
 ## Install
 
 macOS only. Download a [release](https://github.com/andreastandalone/maschine-md-mm/releases)
-(versions end in `-as`, for example `0.2.0-as`) and copy the plug-ins to `~/Library/Audio/Plug-Ins/VST3` and `.../Components`.
+and copy the plug-ins to `~/Library/Audio/Plug-Ins/VST3` and `.../Components`.
 Builds are not signed by Apple, so unblock them once:
 
 ```sh
@@ -35,7 +35,7 @@ xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/"Maschine MD-MM.vst
 xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/Components/"Maschine MD-MM.component"
 ```
 
-Firmware is not included: on first launch, copy your own MD and MM images into
+**Firmware is not included**: on first launch, copy your own MD and MM images into
 the folders shown. The plug-in replaces an installed upstream version and opens
 its projects.
 
