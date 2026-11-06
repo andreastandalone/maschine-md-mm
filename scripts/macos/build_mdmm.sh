@@ -120,6 +120,8 @@ md_vst3="${artifact_root}/VST3/Gearmulator MD.vst3"
 mm_vst3="${artifact_root}/VST3/Gearmulator MM.vst3"
 md_au="${artifact_root}/AU/Gearmulator MD.component"
 mm_au="${artifact_root}/AU/Gearmulator MM.component"
+mdmm_vst3="${artifact_root}/VST3/Maschine MD-MM.vst3"
+mdmm_au="${artifact_root}/AU/Maschine MD-MM.component"
 build_runtime_home="${build_dir}/build-runtime-home"
 build_runtime_data="${build_runtime_home}/Documents"
 core_capacity_check="${build_dir}/mdmm-core-capacity.json"
@@ -193,6 +195,8 @@ cmake --build "${build_dir}" --parallel 4 --target \
   mdJucePlugin_Standalone \
   mmJucePlugin_Standalone \
   mdmmJucePlugin_Standalone \
+  mdmmJucePlugin_VST3 \
+  mdmmJucePlugin_AU \
   pluginTester \
   latency_host \
   baseLibBinaryStreamTest \
@@ -335,12 +339,12 @@ validate_binary_architectures() {
   done
 }
 
-for bundle in "${md_vst3}" "${mm_vst3}"; do
+for bundle in "${md_vst3}" "${mm_vst3}" "${mdmm_vst3}"; do
   rm -f "${bundle}/Contents/Resources/moduleinfo.json"
 done
 
 for bundle in "${md_app}" "${mm_app}" "${md_vst3}" "${mm_vst3}" \
-  "${md_au}" "${mm_au}"; do
+  "${md_au}" "${mm_au}" "${mdmm_vst3}" "${mdmm_au}"; do
   if [[ ! -d "${bundle}" ]]; then
     echo "Expected bundle is missing: ${bundle}" >&2
     exit 3
@@ -391,7 +395,7 @@ if [[ ! -x "${plugin_tester}" ]]; then
   exit 4
 fi
 
-for wrapper in "${md_vst3}" "${mm_vst3}"; do
+for wrapper in "${md_vst3}" "${mm_vst3}" "${mdmm_vst3}"; do
   HOME="${build_runtime_home}" GEARMULATOR_DATA_ROOT="${build_runtime_data}" \
     "${plugin_tester}" -blocks 16 -verify-audio-buses -automation-smoke \
       -plugin "${wrapper}"
@@ -403,13 +407,14 @@ done
 # state implementation through VST3. AU bundles are still built, signed, and
 # checked structurally here, with installed-host lifecycle covered by the
 # bounded human smoke matrix.
-plutil -lint "${md_au}/Contents/Info.plist" "${mm_au}/Contents/Info.plist"
+plutil -lint "${md_au}/Contents/Info.plist" "${mm_au}/Contents/Info.plist" \
+  "${mdmm_au}/Contents/Info.plist"
 
 cleanup_build_runtime_home
 trap - EXIT HUP INT TERM
 
 if find "${md_app}" "${mm_app}" "${mdmm_app}" "${md_vst3}" "${mm_vst3}" \
-    "${md_au}" "${mm_au}" -type f \
+    "${md_au}" "${mm_au}" "${mdmm_vst3}" "${mdmm_au}" -type f \
     \( -iname '*.bin' -o -iname '*.rom' -o -iname '*.nvram' -o \
        -iname '*.syx' -o -iname '*.wav' -o -iname '*.cache' -o \
        -iname '*.mdpd' \) -print -quit | grep -q .; then
@@ -426,6 +431,8 @@ mkdir -p "${package_dir}"
 /usr/bin/ditto "${mm_vst3}" "${package_dir}/Gearmulator MM.vst3"
 /usr/bin/ditto "${md_au}" "${package_dir}/Gearmulator MD.component"
 /usr/bin/ditto "${mm_au}" "${package_dir}/Gearmulator MM.component"
+/usr/bin/ditto "${mdmm_vst3}" "${package_dir}/Maschine MD-MM.vst3"
+/usr/bin/ditto "${mdmm_au}" "${package_dir}/Maschine MD-MM.component"
 /usr/bin/ditto "${source_dir}/LICENSE.md" "${package_dir}/LICENSE.md"
 /usr/bin/ditto "${script_dir}/macsetup_Maschine-MD-MM.command" \
   "${package_dir}/macsetup_Maschine-MD-MM.command"
@@ -467,6 +474,8 @@ python3 "${script_dir}/write_mdmm_receipt.py" \
   --artifact "${package_dir}/Gearmulator MM.vst3" \
   --artifact "${package_dir}/Gearmulator MD.component" \
   --artifact "${package_dir}/Gearmulator MM.component" \
+  --artifact "${package_dir}/Maschine MD-MM.vst3" \
+  --artifact "${package_dir}/Maschine MD-MM.component" \
   --package-file "${package_dir}/macsetup_Maschine-MD-MM.command" \
   --package-file "${package_dir}/INSTALL-macOS.txt"
 

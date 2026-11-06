@@ -128,6 +128,8 @@ bundles=(
   "${package_dir}/Gearmulator MM.vst3"
   "${package_dir}/Gearmulator MD.component"
   "${package_dir}/Gearmulator MM.component"
+  "${package_dir}/Maschine MD-MM.vst3"
+  "${package_dir}/Maschine MD-MM.component"
 )
 for bundle in "${bundles[@]}"; do
   if [[ ! -d "${bundle}" ]]; then
@@ -170,7 +172,8 @@ for bundle in "${bundles[@]}"; do
 done
 /usr/bin/plutil -lint \
   "${package_dir}/Gearmulator MD.component/Contents/Info.plist" \
-  "${package_dir}/Gearmulator MM.component/Contents/Info.plist"
+  "${package_dir}/Gearmulator MM.component/Contents/Info.plist" \
+  "${package_dir}/Maschine MD-MM.component/Contents/Info.plist"
 
 md_smoke_home="${verification_root}/smoke-home-md"
 mm_smoke_home="${verification_root}/smoke-home-mm"
