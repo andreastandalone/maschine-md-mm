@@ -395,11 +395,15 @@ if [[ ! -x "${plugin_tester}" ]]; then
   exit 4
 fi
 
-for wrapper in "${md_vst3}" "${mm_vst3}" "${mdmm_vst3}"; do
+for wrapper in "${md_vst3}" "${mm_vst3}"; do
   HOME="${build_runtime_home}" GEARMULATOR_DATA_ROOT="${build_runtime_data}" \
     "${plugin_tester}" -blocks 16 -verify-audio-buses -automation-smoke \
       -plugin "${wrapper}"
 done
+# The combined plug-in has no host parameters (its machines take MIDI CCs)
+# and its own bus layout, so it gets a plain load and render smoke.
+HOME="${build_runtime_home}" GEARMULATOR_DATA_ROOT="${build_runtime_data}" \
+  "${plugin_tester}" -blocks 16 -plugin "${mdmm_vst3}"
 
 # AUv2 discovery is mediated by macOS's per-user AudioComponent registry; an
 # uninstalled .component cannot be instantiated by path without mutating the
