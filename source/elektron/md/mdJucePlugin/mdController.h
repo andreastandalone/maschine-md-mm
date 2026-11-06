@@ -190,6 +190,10 @@ namespace mdJucePlugin
 		std::atomic<uint64_t> m_transmittedAutomationDigest{14695981039346656037ull};
 		std::atomic<uint8_t> m_currentGlobal{0xff};
 		std::atomic<uint8_t> m_currentKit{0xff};
+		// Values a complete snapshot saved for one Kit, adopted only if the
+		// restored firmware reports that same Kit; guarded by m_synchronizationLock.
+		std::vector<md::automation::ParameterChange> m_restoredKitValues;
+		uint8_t m_restoredKit = 0xff;
 		std::atomic<uint8_t> m_currentPattern{0xff};
 		std::array<uint8_t, 128> m_drumNoteMap{}; // Guarded by m_synchronizationLock.
 		std::array<std::atomic<uint64_t>, 16> m_drumHitUntil{};

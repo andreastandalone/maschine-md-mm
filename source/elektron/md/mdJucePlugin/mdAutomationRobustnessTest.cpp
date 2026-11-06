@@ -1079,6 +1079,7 @@ namespace
 				found = true;
 				break;
 			}
+		saved[3] = 1; // Saved while an old Kit was current.
 		require(found && harness.controller.restoreAutomationSnapshot(saved),
 			"MM complete snapshot restore rejected");
 		harness.controller.onStateLoaded();

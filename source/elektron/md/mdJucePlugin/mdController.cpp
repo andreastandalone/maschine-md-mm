@@ -243,6 +243,8 @@ namespace mdJucePlugin
 
 		m_automationReady.store(false, std::memory_order_release);
 		m_synchronizationEpoch.fetch_add(1, std::memory_order_acq_rel);
+		m_restoredKitValues.clear();
+		m_restoredKit = complete ? _snapshot[3] : 0xff;
 		if(complete)
 		{
 			m_baseChannel.store(_snapshot[2], std::memory_order_release);
@@ -260,9 +262,6 @@ namespace mdJucePlugin
 		{
 			const Address address{_snapshot[position], _snapshot[position + 1],
 				_snapshot[position + 2]};
-			// The restored machine image and its selected Kit already own clean
-			// parameters. Replaying every value from a complete AUTO snapshot here
-			// can overwrite the restored Kit until a pattern change reloads it.
 			// Mute is session state absent from Kit dumps.
 			const auto mutePage = m_model == md::MachineModel::Monomachine
 				? md::automation::monomachine::Mute
@@ -270,7 +269,11 @@ namespace mdJucePlugin
 			const auto pending = version == 1 || address.page == mutePage
 				|| (_snapshot[position + 4] & g_snapshotEntryPending) != 0;
 			if(!pending)
+			{
+				m_restoredKitValues.push_back({address.page, address.track,
+					address.index, _snapshot[position + 3]});
 				continue;
+			}
 			const auto& parameters = findSynthParam(_snapshot[position + 1],
 				_snapshot[position], _snapshot[position + 2]);
 			if(parameters.empty())
@@ -936,6 +939,19 @@ namespace mdJucePlugin
 		{
 			if(!m_kitSynchronization.acceptDump(kit->slot))
 				return true;
+			// A Kit dump holds the stored Kit, not edits made since. The restored
+			// machine still plays the edits its snapshot saved, so those win when
+			// the firmware reports the same Kit.
+			if(kit->slot == m_restoredKit)
+				for(const auto& change : m_restoredKitValues)
+				{
+					for(auto* const parameter : findSynthParam(change.track, change.page, change.index))
+						parameter->setValueFromSynth(change.value,
+							pluginLib::Parameter::Origin::PresetChange);
+					publishAutomationIntent(change, true);
+				}
+			m_restoredKitValues.clear();
+			m_restoredKit = 0xff;
 			if(m_applyRequestedKitDump.exchange(true, std::memory_order_acq_rel))
 				applyKitParameters(kit->parameters);
 			else
